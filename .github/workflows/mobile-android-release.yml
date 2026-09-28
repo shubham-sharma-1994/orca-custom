@@ -16,7 +16,7 @@ on:
       publish_github_release:
         description: 'Create or update the mobile-android-v<version> GitHub Release'
         required: false
-        default: true
+        default: false
         type: boolean
       shell:
         description: 'Which shell the binary mounts: native screens, or the web page delivered over the air. Default native; `ota` is the only value that changes it.'
@@ -84,6 +84,15 @@ jobs:
           set -euo pipefail
           echo "Mobile shell: $EXPO_PUBLIC_MOBILE_SHELL"
           cd android && ./gradlew assembleRelease
+
+      - name: Scan APK for malware
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clamav
+          sudo systemctl stop clamav-freshclam.service
+          sudo freshclam
+          clamscan --infected --fail-if-cvd-older-than=7 android/app/build/outputs/apk/release/*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7

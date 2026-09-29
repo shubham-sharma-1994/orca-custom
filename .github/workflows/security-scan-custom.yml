@@ -29,7 +29,7 @@ jobs:
           scanners: vuln,misconfig,secret
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
-          trivyignores: .trivyignore.yaml
+          trivy-config: trivy.yaml
           exit-code: '1'
           format: table
 
@@ -47,6 +47,7 @@ jobs:
         uses: google/osv-scanner-action/osv-scanner-action@e92b5d07338d4f0ba0981dffed17c48976ca4730 # v2.2.3
         with:
           scan-args: |-
+            --config=docs/site/osv-scanner.toml
             --recursive
             ./
 

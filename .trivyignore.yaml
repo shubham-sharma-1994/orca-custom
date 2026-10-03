@@ -1,0 +1,36 @@
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - cloud/apps/push/Dockerfile
+      - cloud/apps/relay-fence-broker/Dockerfile
+      - cloud/apps/relay/Dockerfile
+    statement: Cloud Run owns service health probes; Docker HEALTHCHECK is not used by the deployment platform.
+
+  - id: DS-0002
+    paths:
+      - config/docker/cli-launch-contract/Dockerfile
+      - config/docker/daemon-scope-lifetime/Dockerfile
+      - config/docker/daemon-shutdown-descendants/Dockerfile
+      - config/docker/headless-pairing/Dockerfile
+      - config/docker/headless-pairing/Dockerfile.build
+      - config/docker/headless-serve-shutdown/Dockerfile
+      - config/docker/linux-lid-sleep-assertion/Dockerfile
+      - tests/e2e/fixtures/docker-ssh-relay/Dockerfile
+    statement: These short-lived test fixtures require root to exercise systemd, process-tree, packaging, or SSH boundaries.
+
+  - id: DS-0026
+    paths:
+      - config/docker/cli-launch-contract/Dockerfile
+      - config/docker/daemon-scope-lifetime/Dockerfile
+      - config/docker/daemon-shutdown-descendants/Dockerfile
+      - config/docker/headless-pairing/Dockerfile
+      - config/docker/headless-pairing/Dockerfile.build
+      - config/docker/headless-serve-shutdown/Dockerfile
+      - config/docker/linux-lid-sleep-assertion/Dockerfile
+      - tests/e2e/fixtures/docker-ssh-relay/Dockerfile
+    statement: These one-shot test fixtures exit with their assertion result and do not run as services.
+
+  - id: DS-0004
+    paths:
+      - tests/e2e/fixtures/docker-ssh-relay/Dockerfile
+    statement: This isolated fixture intentionally exposes SSH to test the remote relay boundary.

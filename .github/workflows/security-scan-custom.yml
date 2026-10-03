@@ -12,58 +12,59 @@ permissions:
 
 jobs:
   trivy:
-    name: Trivy source, dependency and secret scan
+    name: Trivy vulnerability, secret, and misconfiguration scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - name: Scan repository
-        uses: aquasecurity/trivy-action@0.33.1
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.69.3
+          cache: true
+
+      - name: Scan the complete repository
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           scan-type: fs
           scan-ref: .
+          skip-setup-trivy: true
           scanners: vuln,misconfig,secret
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
-          exit-code: '0'
-          format: table
-
-      - name: Block on high/critical vulnerabilities or secrets
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
+          trivy-config: trivy.yaml
           exit-code: '1'
           format: table
 
   osv:
     name: OSV dependency vulnerability scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - name: Scan lockfiles and manifests with OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2.2.3
+      - name: Scan every lockfile and manifest with OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@e92b5d07338d4f0ba0981dffed17c48976ca4730 # v2.2.3
         with:
           scan-args: |-
+            --config=docs/site/osv-scanner.toml
             --recursive
             ./
 
   clamav:
     name: ClamAV malware signature scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -73,7 +74,32 @@ jobs:
           sudo apt-get install -y clamav
 
       - name: Update malware signatures
-        run: sudo freshclam
+        run: |
+          sudo systemctl stop clamav-freshclam.service
+          sudo freshclam
 
       - name: Scan repository for malware
         run: clamscan --recursive --infected --fail-if-cvd-older-than=7 .
+
+  codeql:
+    name: CodeQL JavaScript and TypeScript analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2

@@ -1,0 +1,12 @@
+[package]
+name = "orca-plugin-worktree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+orca-sdk.workspace = true
+orca-plugin-core-config.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

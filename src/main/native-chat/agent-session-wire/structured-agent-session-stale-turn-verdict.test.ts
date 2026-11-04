@@ -1,11 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
-import { agentJournalItemKey } from '../../../shared/agent-session-journal-item-key'
-import type { AgentJournalRenderItem } from '../../../shared/agent-session-journal-types'
-import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
-import { createTrackedJournalOpener } from '../agent-session-journal/journal-store-test-open'
+import { AGENT_JOURNAL_THREAD_SCOPE } from '../../../shared/agent-session/journal/agent-session-journal-types'
+import { expect, it } from 'vitest'
+import { agentJournalItemKey } from '../../../shared/agent-session/journal/agent-session-journal-item-key'
+import type { AgentJournalRenderItem } from '../../../shared/agent-session/journal/agent-session-journal-types'
 import { settleStaleStructuredAgentSessionState } from './structured-agent-session-dead-generation-settlement'
 import {
   runningTurnLifecycleRevisions,
@@ -13,328 +9,236 @@ import {
   UNVERIFIABLE_TURN_VERDICT
 } from './structured-agent-session-stale-turn-verdict'
 
-const THREAD = 'thread-1'
-const RUNNING_IDENTITY = {
-  provider: 'codex' as const,
-  threadId: THREAD,
-  turnId: 'turn-2',
-  ordinal: 0
-}
+import {
+  RUNNING_IDENTITY,
+  journalWith,
+  legacyLifecycleItem,
+  lifecycleItem,
+  verdictForTurn
+} from './structured-agent-session-stale-verdict-contract-test-fixture'
 
-function lifecycleItem(
-  turnId: string,
-  state: 'running' | 'completed',
-  sequence: number,
-  extra: { startedAt?: number; completedAt?: number } = {}
-): AgentJournalRenderItem {
-  return {
-    itemId: agentJournalItemKey({ provider: 'codex', threadId: THREAD, turnId, ordinal: 0 }),
-    revision: 1,
-    sequence,
-    observedAt: sequence,
-    body: { kind: 'turn', turnId, state, ...extra }
-  }
-}
-
-/** The status-form carrier an older host wrote; still read, never written back. */
-function legacyLifecycleItem(turnId: string, startedAt: number): AgentJournalRenderItem {
-  return {
-    ...lifecycleItem(turnId, 'running', 2),
-    body: {
-      kind: 'status',
-      text: 'Working',
-      turnLifecycle: { turnId, state: 'running', startedAt }
-    }
-  }
-}
-
-function promptItem(state: 'pending' | 'resolved', sequence: number): AgentJournalRenderItem {
-  return {
-    itemId: agentJournalItemKey({
-      provider: 'legacy',
-      agent: 'codex',
-      sessionId: 'session-1',
-      recordId: `approval-${state}`
-    }),
-    revision: 1,
-    sequence,
-    observedAt: sequence,
-    body: {
-      kind: 'approval',
-      title: 'Approve?',
-      detail: null,
-      options: [],
-      resolution: {
-        state,
-        selectedOptionId: state === 'resolved' ? 'allow' : null,
-        resolvedBy: state === 'resolved' ? 'client-1' : null,
-        resolvedAt: state === 'resolved' ? 10 : null
-      }
-    }
-  }
-}
-
-describe('turn verdict from death evidence', () => {
-  it('earns an end time only from an observed exit', () => {
-    expect(
-      turnVerdictFromDeathEvidence({ kind: 'exit-observed', detail: 'exit', observedAt: 500 })
-    ).toEqual({ state: 'interrupted', completedAt: 500 })
-    expect(
-      turnVerdictFromDeathEvidence({ kind: 'pid-absent', detail: 'gone', observedAt: 500 })
-    ).toEqual({ state: 'unverifiable' })
-    expect(
-      turnVerdictFromDeathEvidence({ kind: 'identity-mismatch', detail: 'pid', observedAt: 500 })
-    ).toEqual({ state: 'unverifiable' })
-    expect(turnVerdictFromDeathEvidence(null)).toEqual({ state: 'unverifiable' })
+it('ends a watched exit at the exit', () => {
+  expect(verdictForTurn({ kind: 'exit-observed', detail: 'exit', observedAt: 500 })).toEqual({
+    state: 'interrupted',
+    completedAt: 500
   })
 })
 
-describe('running turn lifecycle revisions', () => {
-  it('revises only running rows in place and carries an end time only for an observed exit', () => {
-    const items = [
-      lifecycleItem('turn-1', 'completed', 1, { startedAt: 10, completedAt: 20 }),
-      // A stray end on a running row is never carried into the verdict.
-      lifecycleItem('turn-2', 'running', 2, { startedAt: 30, completedAt: 99 })
-    ]
-    expect(runningTurnLifecycleRevisions(items, { state: 'interrupted', completedAt: 40 })).toEqual(
-      [
-        {
-          kind: 'item',
-          identity: RUNNING_IDENTITY,
-          body: {
-            kind: 'turn',
-            turnId: 'turn-2',
-            state: 'interrupted',
-            startedAt: 30,
-            completedAt: 40
-          }
-        }
-      ]
-    )
-    expect(runningTurnLifecycleRevisions(items, { state: 'unverifiable' })).toEqual([
-      expect.objectContaining({
-        body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 }
-      })
-    ])
-  })
-
-  it('keeps every field it does not own when the host settles a running row', () => {
-    const contextUsage = {
-      used: {
-        kind: 'estimate' as const,
-        usage: {
-          inputTokens: 1,
-          cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 90_000,
-          outputTokens: 5
-        },
-        capturedAt: 35
-      }
-    }
-    const running = lifecycleItem('turn-2', 'running', 2, { startedAt: 30 })
-    const body = {
-      ...running.body,
-      requestedAt: 29,
-      userItemId: 'user-2',
-      contextUsage,
-      // A field a newer build wrote: the verdict does not own it, so it survives.
-      laterField: { kept: true },
-      outcome: 'success' as const,
-      durationMs: 7
-    }
-    const items: AgentJournalRenderItem[] = [{ ...running, body }]
-    const kept = {
-      kind: 'turn',
-      turnId: 'turn-2',
-      startedAt: 30,
-      requestedAt: 29,
-      userItemId: 'user-2',
-      contextUsage,
-      laterField: { kept: true }
-    }
-    expect(
-      runningTurnLifecycleRevisions(items, { state: 'interrupted', completedAt: 40 })[0]
-    ).toMatchObject({ body: { ...kept, state: 'interrupted', completedAt: 40 } })
-    const unverifiable = runningTurnLifecycleRevisions(items, UNVERIFIABLE_TURN_VERDICT)[0]
-    expect(unverifiable?.kind === 'item' ? unverifiable.body : null).toEqual({
-      ...kept,
-      state: 'unverifiable'
+it.each(['pid-absent', 'identity-mismatch'] as const)(
+  'ends a %s proof at the last proof of life, never after the probe',
+  (kind) => {
+    const proof = (lastProvenAliveAt?: number) => ({
+      kind,
+      detail: 'gone',
+      observedAt: 9_000,
+      ...(lastProvenAliveAt === undefined ? {} : { lastProvenAliveAt })
     })
-  })
+    // Last proof of life bounds completion so downtime is never counted as work.
+    expect(verdictForTurn(proof(8_000))).toEqual({ state: 'interrupted', completedAt: 8_000 })
+    expect(verdictForTurn(proof(9_500))).toEqual({ state: 'interrupted', completedAt: 9_000 })
+    expect(verdictForTurn(proof())).toEqual({ state: 'interrupted', completedAt: 9_000 })
+  }
+)
 
-  it('revises a legacy status-form running row from an older host into a typed turn', () => {
-    expect(
-      runningTurnLifecycleRevisions([legacyLifecycleItem('turn-2', 30)], { state: 'unverifiable' })
-    ).toEqual([
-      {
-        kind: 'item',
-        identity: RUNNING_IDENTITY,
-        body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 }
-      }
-    ])
-  })
+it('ends a watched exit at the exit even when a renewal is recorded', () => {
+  expect(
+    verdictForTurn({
+      kind: 'exit-observed',
+      detail: 'exit',
+      observedAt: 500,
+      lastProvenAliveAt: 400
+    })
+  ).toEqual({ state: 'interrupted', completedAt: 500 })
+})
 
-  it('skips rows without a parseable identity', () => {
-    const item = { ...lifecycleItem('turn-2', 'running', 2), itemId: 'not-an-item-key' }
-    expect(runningTurnLifecycleRevisions([item], { state: 'unverifiable' })).toEqual([])
+it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  'keeps proven exit without an invalid time %s',
+  (observedAt) => {
+    expect(verdictForTurn({ kind: 'exit-observed', detail: '', observedAt })).toEqual({
+      state: 'interrupted'
+    })
+  }
+)
+
+it('leaves a release nothing proved unverifiable', () => {
+  expect(verdictForTurn(null)).toEqual({ state: 'unverifiable' })
+  expect(verdictForTurn(undefined)).toEqual({ state: 'unverifiable' })
+})
+
+it('keeps the rule an older build applied to evidence that names no owner', () => {
+  // Legacy ownerless evidence proves only observed exit, never probe results.
+  const legacy = { detail: 'gone', observedAt: 9_000, lastProvenAliveAt: 8_000 }
+  expect(turnVerdictFromDeathEvidence({ ...legacy, kind: 'exit-observed' }, 1)).toEqual({
+    state: 'interrupted',
+    completedAt: 9_000
+  })
+  expect(turnVerdictFromDeathEvidence({ ...legacy, kind: 'pid-absent' }, 1)).toEqual({
+    state: 'unverifiable'
   })
 })
 
-describe('stale session state on a cold acquire', () => {
-  function journalWith(items: AgentJournalRenderItem[]) {
-    const appendLifecycleBatch = vi.fn(async () => ({ epoch: 'epoch-1', sequence: 9 }))
-    const journal = {
-      snapshot: () => ({ items }),
-      cursor: () => ({ epoch: 'epoch-1', sequence: 8 }),
-      appendLifecycleBatch
-    } as unknown as AgentSessionJournal
-    return { journal, appendLifecycleBatch }
+it('gives a turn no end from evidence about any other owner', () => {
+  const proof = {
+    kind: 'pid-absent' as const,
+    detail: 'gone',
+    observedAt: 9_000,
+    lastProvenAliveAt: 8_000
   }
+  // Another owner’s death or unknown turn provenance cannot prove this owner ended.
+  for (const [evidence, turnFence] of [
+    [{ ...proof, ownerFence: 3 }, 1],
+    [{ ...proof, kind: 'exit-observed' as const, ownerFence: 3 }, 1],
+    [{ ...proof, ownerFence: 1 }, undefined]
+  ] as const) {
+    expect(turnVerdictFromDeathEvidence(evidence, turnFence)).toEqual({ state: 'unverifiable' })
+  }
+})
 
-  it('marks a running row from the dead generation unverifiable without an end time', async () => {
-    const { journal, appendLifecycleBatch } = journalWith([
-      lifecycleItem('turn-1', 'completed', 1, { startedAt: 10, completedAt: 20 }),
-      lifecycleItem('turn-2', 'running', 2, { startedAt: 30 })
-    ])
-
-    await expect(
-      settleStaleStructuredAgentSessionState({
-        journal,
-        sessionId: 'session-1',
-        fence: 14,
-        acquisitionGeneration: 'generation-2',
-        deathEvidence: null
-      })
-    ).resolves.toBe(1)
-
-    expect(appendLifecycleBatch).toHaveBeenCalledExactlyOnceWith({
-      settlementId: 'stale-session:session-1:14:generation-2',
-      fence: 14,
-      recovered: true,
-      mutations: [
-        {
-          kind: 'item',
-          identity: RUNNING_IDENTITY,
-          body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 }
-        }
-      ]
-    })
-  })
-
-  it('cancels only prompts whose callbacks were lost with the prior owner', async () => {
-    const pending = promptItem('pending', 1)
-    const resolved = promptItem('resolved', 2)
-    const { journal, appendLifecycleBatch } = journalWith([pending, resolved])
-
-    await expect(
-      settleStaleStructuredAgentSessionState({
-        journal,
-        sessionId: 'session-1',
-        fence: 14,
-        acquisitionGeneration: 'generation-2',
-        deathEvidence: null
-      })
-    ).resolves.toBe(1)
-
-    expect(appendLifecycleBatch).toHaveBeenCalledExactlyOnceWith({
-      settlementId: 'stale-session:session-1:14:generation-2',
-      fence: 14,
-      recovered: true,
-      mutations: [
-        {
-          kind: 'item',
-          identity: {
-            provider: 'legacy',
-            agent: 'codex',
-            sessionId: 'session-1',
-            recordId: 'approval-pending'
-          },
-          body: {
-            ...pending.body,
-            resolution: {
-              state: 'cancelled',
-              selectedOptionId: null,
-              resolvedBy: null,
-              resolvedAt: null
-            }
-          }
-        }
-      ]
-    })
-  })
-
-  it("cancels a subagent's lost prompt as the subagent's, and the session's own as its own", async () => {
-    // The sweep names no producer, so each cancelled row keeps the one it had.
-    const root = await mkdtemp(join(tmpdir(), 'orca-stale-session-'))
-    const journals = createTrackedJournalOpener()
-    try {
-      const journal = await journals.open({
-        identity: {
-          sessionId: 'session-1',
-          workspaceId: 'workspace-1',
-          hostId: 'local',
-          agent: 'codex',
-          providerHandle: { kind: 'codex', threadId: THREAD }
-        },
-        journalDir: root,
-        now: () => 1_000
-      })
-      const child = { agentId: 'thread-child', producerKind: 'agent' as const }
-      const { body } = promptItem('pending', 1)
-      const prompt = (threadId: string) => ({
-        provider: 'codex' as const,
-        threadId,
-        turnId: 'turn-1',
-        ordinal: 1
-      })
-      await journal.appendItem(prompt('thread-child'), body, { fence: 1, ...child })
-      await journal.appendItem(prompt(THREAD), body, { fence: 1 })
-
-      await settleStaleStructuredAgentSessionState({
-        journal,
-        sessionId: 'session-1',
-        fence: 2,
-        acquisitionGeneration: 'generation-2',
-        deathEvidence: null
-      })
-
-      expect(
-        journal.snapshot().items.map((item) => [item.body.kind, item.revision, item.agentId])
-      ).toEqual([
-        ['approval', 2, 'thread-child'],
-        ['approval', 2, undefined]
-      ])
-    } finally {
-      await journals.closeAll()
-      await rm(root, { recursive: true, force: true })
+it('revises only running rows in place and carries an end time only for an observed exit', () => {
+  const items = [
+    lifecycleItem('turn-1', 'completed', 1, { startedAt: 10, completedAt: 20 }),
+    lifecycleItem('turn-2', 'running', 2, { startedAt: 30, completedAt: 99 })
+  ]
+  expect(runningTurnLifecycleRevisions(items, { state: 'interrupted', completedAt: 40 })).toEqual([
+    {
+      kind: 'item',
+      itemId: agentJournalItemKey(RUNNING_IDENTITY),
+      body: {
+        kind: 'turn',
+        turnId: 'turn-2',
+        state: 'interrupted',
+        startedAt: 30,
+        completedAt: 40
+      },
+      turnScope: { kind: 'thread' }
     }
+  ])
+  expect(runningTurnLifecycleRevisions(items, { state: 'unverifiable' })).toEqual([
+    expect.objectContaining({
+      body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 }
+    })
+  ])
+})
+
+it('keeps known turn fields and extensions in the rewrite', () => {
+  const contextUsage = {
+    used: {
+      kind: 'estimate' as const,
+      usage: {
+        inputTokens: 1,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 90_000,
+        outputTokens: 5
+      },
+      capturedAt: 35
+    }
+  }
+  const running = lifecycleItem('turn-2', 'running', 2, { startedAt: 30 })
+  const body = {
+    ...running.body,
+    requestedAt: 29,
+    userItemId: 'user-2',
+    contextUsage,
+    laterField: { kept: true },
+    outcome: 'success' as const,
+    durationMs: 7
+  }
+  const items: AgentJournalRenderItem[] = [{ ...running, body }]
+  const kept = {
+    kind: 'turn',
+    turnId: 'turn-2',
+    startedAt: 30,
+    requestedAt: 29,
+    userItemId: 'user-2',
+    contextUsage,
+    laterField: { kept: true }
+  }
+  expect(
+    runningTurnLifecycleRevisions(items, { state: 'interrupted', completedAt: 40 })[0]
+  ).toMatchObject({ body: { ...kept, state: 'interrupted', completedAt: 40 } })
+  expect(items[0]?.body).toHaveProperty('laterField')
+  const unverifiable = runningTurnLifecycleRevisions(items, UNVERIFIABLE_TURN_VERDICT)[0]
+  expect(unverifiable?.kind === 'item' ? unverifiable.body : null).toEqual({
+    ...kept,
+    state: 'unverifiable'
   })
+})
 
-  it('writes nothing when no turn is running and keys on the journal position without a generation', async () => {
-    const idle = journalWith([
-      lifecycleItem('turn-1', 'completed', 1, { startedAt: 10, completedAt: 20 })
-    ])
-    await expect(
-      settleStaleStructuredAgentSessionState({
-        journal: idle.journal,
-        sessionId: 'session-1',
-        fence: 14,
-        acquisitionGeneration: null,
-        deathEvidence: null
-      })
-    ).resolves.toBe(0)
-    expect(idle.appendLifecycleBatch).not.toHaveBeenCalled()
+it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  'keeps an untimed interruption for %s even when the saved turn has a start',
+  (completedAt) => {
+    const item = lifecycleItem('turn-2', 'running', 2, { startedAt: 500 })
+    expect(
+      runningTurnLifecycleRevisions([item], { state: 'interrupted', completedAt })
+    ).toMatchObject([{ body: { kind: 'turn', state: 'interrupted', startedAt: 500 } }])
+    const [mutation] = runningTurnLifecycleRevisions([item], {
+      state: 'interrupted',
+      completedAt
+    })
+    expect(mutation?.kind === 'item' ? mutation.body : null).not.toHaveProperty('completedAt')
+  }
+)
 
-    const running = journalWith([lifecycleItem('turn-2', 'running', 2)])
-    await settleStaleStructuredAgentSessionState({
-      journal: running.journal,
+it('never ends a turn before it began, when the last proof of life predates it', () => {
+  const item = lifecycleItem('turn-2', 'running', 2, { startedAt: 500 })
+  expect(
+    runningTurnLifecycleRevisions([item], { state: 'interrupted', completedAt: 300 })
+  ).toMatchObject([{ body: { kind: 'turn', state: 'interrupted', completedAt: 500 } }])
+})
+
+it('revises a legacy status-form running row from an older host into a typed turn', () => {
+  expect(
+    runningTurnLifecycleRevisions([legacyLifecycleItem('turn-2', 30)], { state: 'unverifiable' })
+  ).toEqual([
+    {
+      kind: 'item',
+      itemId: agentJournalItemKey(RUNNING_IDENTITY),
+      body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 },
+      turnScope: { kind: 'thread' }
+    }
+  ])
+})
+
+it('revises a saved row by its key even when its identity cannot be parsed', () => {
+  const item = { ...lifecycleItem('turn-2', 'running', 2), itemId: 'not-an-item-key' }
+  expect(runningTurnLifecycleRevisions([item], { state: 'unverifiable' })).toEqual([
+    {
+      kind: 'item',
+      itemId: 'not-an-item-key',
+      body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable' },
+      turnScope: AGENT_JOURNAL_THREAD_SCOPE
+    }
+  ])
+})
+
+it('marks a running row from the dead generation unverifiable without an end time', async () => {
+  const { journal, appendLifecycleBatch } = journalWith([
+    lifecycleItem('turn-1', 'completed', 1, { startedAt: 10, completedAt: 20 }),
+    lifecycleItem('turn-2', 'running', 2, { startedAt: 30 })
+  ])
+
+  await expect(
+    settleStaleStructuredAgentSessionState({
+      journal,
       sessionId: 'session-1',
       fence: 14,
-      acquisitionGeneration: null,
+      acquisitionGeneration: 'generation-2',
       deathEvidence: null
     })
-    expect(running.appendLifecycleBatch).toHaveBeenCalledWith(
-      expect.objectContaining({ settlementId: 'stale-session:session-1:14:seq-8' })
-    )
+  ).resolves.toBe(1)
+
+  expect(appendLifecycleBatch).toHaveBeenCalledExactlyOnceWith({
+    settlementId: 'stale-session:session-1:14:generation-2',
+    fence: 14,
+    recovered: true,
+    dispatches: [],
+    mutations: [
+      {
+        kind: 'item',
+        itemId: agentJournalItemKey(RUNNING_IDENTITY),
+        body: { kind: 'turn', turnId: 'turn-2', state: 'unverifiable', startedAt: 30 },
+        turnScope: { kind: 'thread' }
+      }
+    ]
   })
 })

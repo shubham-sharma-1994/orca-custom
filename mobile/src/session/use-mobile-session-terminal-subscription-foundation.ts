@@ -1,5 +1,4 @@
 import { useRef, useCallback } from 'react'
-import { measureTerminalViewportOnce } from './mobile-terminal-first-subscribe-viewport'
 import type { MobileSessionNativeChatDictationModel } from './use-mobile-session-native-chat-dictation'
 
 export function useMobileSessionTerminalSubscriptionFoundation(
@@ -9,8 +8,6 @@ export function useMobileSessionTerminalSubscriptionFoundation(
     setCoveredStreamRevision,
     setTerminalKeyboardMetrics,
     terminalCwdRef,
-    viewportRef,
-    viewportMeasuredRef,
     terminalRefs,
     terminalUnsubsRef,
     subscribingHandlesRef,
@@ -19,14 +16,11 @@ export function useMobileSessionTerminalSubscriptionFoundation(
     terminalDiagnosticsRef,
     viewportResubscribeBudgetRef,
     webReadyHandlesRef,
-    subscribedDocumentsRef,
     activeHandleRef,
     subscribeSeqRef,
     layoutSeqRef,
-    terminalFrameHeightRef,
     nativeChatInputLeaseReadyRef,
-    clearNativeChatInputLease,
-    showNativeChatRef
+    clearNativeChatInputLease
   } = scope
   const getTerminalRef = useCallback((handle: string | null) => {
     return handle ? terminalRefs.current.get(handle) : undefined
@@ -40,27 +34,19 @@ export function useMobileSessionTerminalSubscriptionFoundation(
       leaseOnlyHandlesRef.current.delete(handle)
       terminalDiagnosticsRef.current.terminalUnsubscribed(handle)
       subscribeSeqRef.current.set(handle, (subscribeSeqRef.current.get(handle) ?? 0) + 1)
-      // Why: reset the high-water mark so a fresh subscription's first scrollback isn't dropped as stale.
+      // Reset sequence state so a fresh subscription’s first snapshot cannot look stale.
       layoutSeqRef.current.delete(handle)
-      // Why compare against the RENDERED lease: `clear` reports the drop from its
-      // synchronous mirror, so a `subscribed`+`end` pair applied in one render batch
-      // reports "dropped" while React only ever sees false → the effect never re-runs
-      // and the composer stays locked (#10681). A dead PTY can also emit `end` with no
-      // preceding `subscribed`, where the clear is a no-op for the same reason. Either
-      // way the flip carries no signal, so bump. When the lease really was up on
-      // screen, `leaseReady` already re-runs the effect and bumping too would
-      // double-render this whole route on every chat open.
+      // A new subscription needs its own snapshot before cell diffs can safely redraw.
+      initializedHandlesRef.current.delete(handle)
+      // Signal teardown when rendered lease was already false: batched subscribed/end or end alone would otherwise never rerun stream recovery, covered or not.
+      // An actually rendered lease already triggers recovery through state; another signal there would rerender the route twice.
       const leaseWasOnScreen = nativeChatInputLeaseReadyRef.current
       const leaseDropped = clearNativeChatInputLease(handle)
-      if (
-        (!leaseDropped || !leaseWasOnScreen) &&
-        showNativeChatRef.current &&
-        handle === activeHandleRef.current
-      ) {
+      if ((!leaseDropped || !leaseWasOnScreen) && handle === activeHandleRef.current) {
         setCoveredStreamRevision((revision) => revision + 1)
       }
     },
-    [clearNativeChatInputLease, nativeChatInputLeaseReadyRef, showNativeChatRef]
+    [clearNativeChatInputLease, nativeChatInputLeaseReadyRef]
   )
   const unsubscribeTerminalRef = useRef(unsubscribeTerminal)
   // PTY event callbacks fire before passive effects flush, so they need the current unsubscribe.
@@ -77,7 +63,6 @@ export function useMobileSessionTerminalSubscriptionFoundation(
     terminalDiagnosticsRef.current.clearTerminalCache()
     viewportResubscribeBudgetRef.current.clear()
     webReadyHandlesRef.current.clear()
-    subscribedDocumentsRef.current.clear()
     subscribeSeqRef.current.clear()
     layoutSeqRef.current.clear()
     terminalCwdRef.current.clear()
@@ -86,27 +71,11 @@ export function useMobileSessionTerminalSubscriptionFoundation(
       term.clear()
     }
   }, [clearNativeChatInputLease])
-
-  const measureViewportOnce = useCallback(
-    (handle: string) =>
-      measureTerminalViewportOnce({
-        handle,
-        ref: getTerminalRef(handle),
-        documentHasTerminal: initializedHandlesRef.current.has(handle),
-        viewportRef,
-        viewportMeasuredRef,
-        terminalFrameHeightRef,
-        onMeasured: (measuredHandle, dims, frameHeight) =>
-          terminalDiagnosticsRef.current.viewportMeasured(measuredHandle, dims, frameHeight)
-      }),
-    [getTerminalRef]
-  )
   return {
     getTerminalRef,
     unsubscribeTerminal,
     unsubscribeTerminalRef,
-    clearTerminalCache,
-    measureViewportOnce
+    clearTerminalCache
   }
 }
 

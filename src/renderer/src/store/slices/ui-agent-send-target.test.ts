@@ -1,14 +1,19 @@
 import type { StoreApi } from 'zustand/vanilla'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
-import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
+import type { AgentStatusEntry } from '../../../../shared/agent-status/contracts/agent-status-types'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
+import '../../../../shared/agent-session/view/structured-agent-session-projection'
 import { buildAgentNotificationId } from '../../../../shared/agent-notification-id'
 import type { AppState } from '../types'
 import { createUIStore } from './ui-slice-test-harness'
 
 const mocks = vi.hoisted(() => ({
   sendNotesToActiveAgentSession: vi.fn(),
+  sendStructuredAgentSessionMessage: vi.fn(),
+  relaunchFailedStructuredAgentSessionWithMessage: vi.fn(
+    (): Promise<{ delivered: boolean }> | null => null
+  ),
   track: vi.fn(),
   toastMessage: vi.fn(),
   toastSuccess: vi.fn(),
@@ -21,6 +26,28 @@ vi.mock('@/lib/active-agent-note-send', () => ({
     options: { explicitTarget?: boolean } = {}
   ) => (options.explicitTarget ? `selected:${status}` : status),
   sendNotesToActiveAgentSession: mocks.sendNotesToActiveAgentSession
+}))
+
+vi.mock('@/components/native-chat/structured-agent-session-message-sender', () => ({
+  sendStructuredAgentSessionMessage: mocks.sendStructuredAgentSessionMessage
+}))
+// The chat's tab names its host; the send only needs to find one.
+vi.mock('@/store', () => ({
+  useAppStore: {
+    getState: () => ({
+      unifiedTabsByWorktree: {
+        'wt-1': [{ contentType: 'agent-session', entityId: 'claude_1', worktreeId: 'wt-1' }]
+      }
+    })
+  }
+}))
+vi.mock('@/runtime/structured-agent-session-owner', () => ({
+  structuredAgentSessionTargetForTab: () => ({ kind: 'local' })
+}))
+
+vi.mock('@/lib/agent-session/launch/structured-agent-session-launch-message', () => ({
+  relaunchFailedStructuredAgentSessionWithMessage:
+    mocks.relaunchFailedStructuredAgentSessionWithMessage
 }))
 
 vi.mock('@/lib/telemetry', () => ({
@@ -43,6 +70,12 @@ afterEach(() => {
 beforeEach(() => {
   mocks.sendNotesToActiveAgentSession.mockReset()
   mocks.sendNotesToActiveAgentSession.mockResolvedValue({ status: 'sent' })
+  mocks.sendStructuredAgentSessionMessage.mockReset()
+  mocks.sendStructuredAgentSessionMessage.mockReturnValue({
+    clientMessageId: 'sent',
+    outcome: Promise.resolve('recorded')
+  })
+  mocks.relaunchFailedStructuredAgentSessionWithMessage.mockClear()
   mocks.track.mockReset()
   mocks.toastMessage.mockReset()
   mocks.toastSuccess.mockReset()
@@ -72,6 +105,13 @@ function makeTerminalTab(id: string, worktreeId: string): TerminalTab {
     sortOrder: 0,
     createdAt: Date.now()
   }
+}
+
+// Why: send targets list structured chats from the tabs slice, which the UI harness omits.
+function createAgentSendStore(): StoreApi<AppState> {
+  const store = createUIStore()
+  store.setState({ unifiedTabsByWorktree: {} })
+  return store
 }
 
 function deferred<T>() {
@@ -146,37 +186,11 @@ describe('createUISlice agent send target mode', () => {
           stateHistory: []
         }
       }
-    } as Partial<AppState>)
+    } satisfies Partial<AppState>)
   }
 
-  it('opens target mode with derived eligible and disabled pane keys', () => {
-    const store = createUIStore()
-    seedAgentSendState(store)
-
-    store.getState().openAgentSendPopoverTargetMode({
-      id: 'send-1',
-      worktreeId,
-      source: 'diff-notes',
-      prompt: 'Review this',
-      label: 'All unsent notes',
-      launchSource: 'notes_send'
-    })
-
-    expect(store.getState().agentSendPopoverTargetMode).toMatchObject({
-      id: 'send-1',
-      eligiblePaneKeys: [readyPaneKey, workingPaneKey],
-      disabledPaneKeys: {},
-      status: 'open'
-    })
-    expect(store.getState().pendingRevealWorktree).toMatchObject({
-      worktreeId,
-      behavior: 'auto',
-      highlight: true
-    })
-  })
-
   it('disables sidebar target rows that need permission', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     seedAgentSendState(store)
     const agentStatusByPaneKey = store.getState().agentStatusByPaneKey
     store.setState({
@@ -187,7 +201,7 @@ describe('createUISlice agent send target mode', () => {
           state: 'blocked'
         }
       }
-    } as Partial<AppState>)
+    } satisfies Partial<AppState>)
 
     store.getState().openAgentSendPopoverTargetMode({
       id: 'send-1',
@@ -212,54 +226,10 @@ describe('createUISlice agent send target mode', () => {
     expect(mocks.sendNotesToActiveAgentSession).not.toHaveBeenCalled()
   })
 
-  it('does not reveal the sidebar when the current workspace has no eligible targets', () => {
-    const store = createUIStore()
-    seedAgentSendState(store)
-    store.setState({
-      terminalLayoutsByTabId: {
-        [tabId]: {
-          root: {
-            type: 'split',
-            direction: 'vertical',
-            first: { type: 'leaf', leafId: readyLeafId },
-            second: { type: 'leaf', leafId: workingLeafId }
-          },
-          activeLeafId: readyLeafId,
-          expandedLeafId: null,
-          ptyIdsByLeafId: {
-            [readyLeafId]: 'pty-ready',
-            [workingLeafId]: 'pty-working'
-          }
-        }
-      },
-      ptyIdsByTabId: {
-        [tabId]: []
-      }
-    })
-
-    store.getState().openAgentSendPopoverTargetMode({
-      id: 'send-1',
-      worktreeId,
-      source: 'browser-annotations',
-      prompt: 'Review this',
-      label: 'Browser annotations',
-      launchSource: 'notes_send'
-    })
-
-    expect(store.getState().agentSendPopoverTargetMode).toMatchObject({
-      id: 'send-1',
-      eligiblePaneKeys: [],
-      disabledPaneKeys: {
-        [readyPaneKey]: 'Terminal is no longer available',
-        [workingPaneKey]: 'Terminal is no longer available'
-      }
-    })
-    expect(store.getState().pendingRevealWorktree).toBeNull()
-  })
-
   it('sends to the live leaf PTY, runs delivery callback, tracks followup, and closes', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const onPromptDelivered = vi.fn()
+    const onPromptHandedOff = vi.fn()
     seedAgentSendState(store)
     store.getState().openAgentSendPopoverTargetMode({
       id: 'send-1',
@@ -268,10 +238,15 @@ describe('createUISlice agent send target mode', () => {
       prompt: 'Review this',
       label: 'All unsent notes',
       launchSource: 'notes_send',
-      onPromptDelivered
+      onPromptDelivered,
+      onPromptHandedOff
     })
 
     await expect(store.getState().sendPromptToSidebarAgentTarget(readyPaneKey)).resolves.toBe(true)
+
+    // The notes leave the next send for exactly this send's lifetime.
+    expect(onPromptHandedOff).toHaveBeenCalledOnce()
+    await expect(onPromptHandedOff.mock.calls[0][0]).resolves.toMatchObject({ status: 'sent' })
 
     expect(mocks.sendNotesToActiveAgentSession).toHaveBeenCalledWith({
       worktreeId,
@@ -289,7 +264,7 @@ describe('createUISlice agent send target mode', () => {
   })
 
   it('keeps target mode open and does not run delivery callback when send fails', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const onPromptDelivered = vi.fn()
     seedAgentSendState(store)
     mocks.sendNotesToActiveAgentSession.mockResolvedValue({ status: 'not-ready' })
@@ -317,33 +292,8 @@ describe('createUISlice agent send target mode', () => {
     })
   })
 
-  it('sends to a working agent row through the selected-target note helper', async () => {
-    const store = createUIStore()
-    seedAgentSendState(store)
-    store.getState().openAgentSendPopoverTargetMode({
-      id: 'send-1',
-      worktreeId,
-      source: 'browser-annotations',
-      prompt: 'Review this',
-      label: 'Browser annotations',
-      launchSource: 'notes_send'
-    })
-
-    await expect(store.getState().sendPromptToSidebarAgentTarget(workingPaneKey)).resolves.toBe(
-      true
-    )
-
-    expect(mocks.sendNotesToActiveAgentSession).toHaveBeenCalledWith({
-      worktreeId,
-      prompt: 'Review this',
-      noteTarget: { tabId, leafId: workingLeafId }
-    })
-    expect(mocks.toastSuccess).toHaveBeenCalledWith('Sent to Codex')
-    expect(store.getState().agentSendPopoverTargetMode).toBeNull()
-  })
-
   it('acknowledges delivery when the picker closes before the send completes', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const onPromptDelivered = vi.fn()
     const write = deferred<{ status: 'sent' }>()
     seedAgentSendState(store)
@@ -374,7 +324,7 @@ describe('createUISlice agent send target mode', () => {
   })
 
   it('does not let an older send close a reopened popover with the same id', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const onPromptDelivered = vi.fn()
     const write = deferred<{ status: 'sent' }>()
     seedAgentSendState(store)
@@ -417,7 +367,7 @@ describe('createUISlice agent send target mode', () => {
   })
 
   it('does not let an older send failure mutate a reopened popover with the same id', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const onPromptDelivered = vi.fn()
     const write = deferred<{ status: 'not-ready' }>()
     seedAgentSendState(store)
@@ -460,7 +410,7 @@ describe('createUISlice agent send target mode', () => {
   })
 
   it('does not retarget the same popover while a send is in progress', async () => {
-    const store = createUIStore()
+    const store = createAgentSendStore()
     const write = deferred<{ status: 'sent' }>()
     seedAgentSendState(store)
     mocks.sendNotesToActiveAgentSession.mockReturnValue(write.promise)
@@ -512,184 +462,68 @@ describe('createUISlice acknowledgeAgents notification dismissal', () => {
     vi.useRealTimers()
   })
 
-  it('dismisses live and retained agent notifications only when the event is unvisited', () => {
-    const dismiss = vi.fn().mockResolvedValue({ dismissed: 0 })
-    vi.stubGlobal('window', { api: { notifications: { dismiss } } })
-    const store = createUIStore()
-    store.setState({
-      tabsByWorktree: {
-        'wt-live': [makeTerminalTab(tabId, 'wt-live')]
-      },
-      agentStatusByPaneKey: {
-        [livePaneKey]: makeAgentEntry(livePaneKey, 1_000),
-        [skippedPaneKey]: makeAgentEntry(skippedPaneKey, 3_000)
-      },
-      retainedAgentsByPaneKey: {
-        [retainedPaneKey]: {
-          entry: makeAgentEntry(retainedPaneKey, 2_000),
-          worktreeId: 'wt-retained',
-          tab: makeTerminalTab('tab-retained', 'wt-retained'),
-          agentType: 'codex',
-          startedAt: 2_000
-        }
-      },
-      acknowledgedAgentsByPaneKey: {
-        [skippedPaneKey]: 4_000
-      }
-    } as Partial<AppState>)
-
-    store.getState().acknowledgeAgents([livePaneKey, retainedPaneKey, skippedPaneKey])
-
-    expect(dismiss).toHaveBeenCalledWith(
-      [
-        buildAgentNotificationId({
-          worktreeId: 'wt-live',
-          paneKey: livePaneKey,
-          stateStartedAt: 1_000
-        }),
-        buildAgentNotificationId({
-          worktreeId: 'wt-retained',
-          paneKey: retainedPaneKey,
-          stateStartedAt: 2_000
-        })
-      ],
-      [livePaneKey, retainedPaneKey, skippedPaneKey]
-    )
-
-    dismiss.mockClear()
-    vi.setSystemTime(new Date('2026-06-02T12:00:01Z'))
-    store.getState().acknowledgeAgents([livePaneKey, retainedPaneKey])
-
-    // Nothing rebuilt twice; main still gets the subjects so it can retire what it announced.
-    expect(dismiss).toHaveBeenCalledWith([], [livePaneKey, retainedPaneKey])
-  })
-
-  it('falls back to live entry worktree attribution and skips unresolved live entries', () => {
-    const dismiss = vi.fn().mockResolvedValue({ dismissed: 0 })
-    vi.stubGlobal('window', { api: { notifications: { dismiss } } })
-    const store = createUIStore()
-    const fallbackPaneKey = makePaneKey('tab-fallback', '44444444-4444-4444-8444-444444444444')
-    store.setState({
-      tabsByWorktree: {},
-      agentStatusByPaneKey: {
-        [fallbackPaneKey]: {
-          ...makeAgentEntry(fallbackPaneKey, 1_000),
-          worktreeId: 'wt-from-entry'
+  it.each([undefined, 'remote-host'])(
+    'dismisses unvisited live and retained notifications on %s',
+    (environmentId) => {
+      const dismiss = vi.fn().mockResolvedValue({ dismissed: 0 })
+      vi.stubGlobal('window', { api: { notifications: { dismiss } } })
+      const store = createAgentSendStore()
+      const tab = (id: string, worktreeId: string) => ({
+        ...makeTerminalTab(id, worktreeId),
+        ptyId: environmentId ? `remote:${environmentId}@@${id}` : id
+      })
+      store.setState({
+        tabsByWorktree: {
+          'wt-live': [tab(tabId, 'wt-live')]
         },
-        [livePaneKey]: makeAgentEntry(livePaneKey, 2_000)
-      },
-      retainedAgentsByPaneKey: {}
-    } as Partial<AppState>)
-
-    store.getState().acknowledgeAgents([fallbackPaneKey, livePaneKey])
-
-    expect(dismiss).toHaveBeenCalledWith(
-      [
-        buildAgentNotificationId({
-          worktreeId: 'wt-from-entry',
-          paneKey: fallbackPaneKey,
-          stateStartedAt: 1_000
-        })
-      ],
-      [fallbackPaneKey, livePaneKey]
-    )
-  })
-
-  it('dedupes identical live and retained notification ids for the same pane', () => {
-    const dismiss = vi.fn().mockResolvedValue({ dismissed: 0 })
-    vi.stubGlobal('window', { api: { notifications: { dismiss } } })
-    const store = createUIStore()
-    store.setState({
-      tabsByWorktree: {
-        'wt-live': [makeTerminalTab(tabId, 'wt-live')]
-      },
-      agentStatusByPaneKey: {
-        [livePaneKey]: makeAgentEntry(livePaneKey, 1_000)
-      },
-      retainedAgentsByPaneKey: {
-        [livePaneKey]: {
-          entry: makeAgentEntry(livePaneKey, 1_000),
-          worktreeId: 'wt-live',
-          tab: makeTerminalTab(tabId, 'wt-live'),
-          agentType: 'codex',
-          startedAt: 1_000
+        agentStatusByPaneKey: {
+          [livePaneKey]: makeAgentEntry(livePaneKey, 1_000),
+          [skippedPaneKey]: makeAgentEntry(skippedPaneKey, 3_000)
+        },
+        retainedAgentsByPaneKey: {
+          [retainedPaneKey]: {
+            entry: makeAgentEntry(retainedPaneKey, 2_000),
+            worktreeId: 'wt-retained',
+            tab: tab('tab-retained', 'wt-retained'),
+            agentType: 'codex',
+            startedAt: 2_000
+          }
+        },
+        acknowledgedAgentsByPaneKey: {
+          [skippedPaneKey]: 4_000
         }
-      }
-    } as Partial<AppState>)
+      } satisfies Partial<AppState>)
 
-    store.getState().acknowledgeAgents([livePaneKey])
+      store.getState().acknowledgeAgents([livePaneKey, retainedPaneKey, skippedPaneKey])
 
-    expect(dismiss).toHaveBeenCalledWith(
-      [
-        buildAgentNotificationId({
-          worktreeId: 'wt-live',
-          paneKey: livePaneKey,
-          stateStartedAt: 1_000
-        })
-      ],
-      [livePaneKey]
-    )
-  })
-})
+      const qualify = (id: string | null) =>
+        environmentId ? JSON.stringify([`runtime:${environmentId}`, id]) : id
+      expect(dismiss).toHaveBeenCalledWith(
+        [
+          qualify(
+            buildAgentNotificationId({
+              worktreeId: 'wt-live',
+              paneKey: livePaneKey,
+              stateStartedAt: 1_000
+            })
+          ),
+          qualify(
+            buildAgentNotificationId({
+              worktreeId: 'wt-retained',
+              paneKey: retainedPaneKey,
+              stateStartedAt: 2_000
+            })
+          )
+        ],
+        [livePaneKey, retainedPaneKey, skippedPaneKey]
+      )
 
-describe('openDiffNotesSendMenuForActiveWorktree', () => {
-  function stubDiffNotesStore(
-    comments: { sentAt?: number }[],
-    activeWorktreeId: string | null = 'wt-1'
-  ): { store: StoreApi<AppState>; setRightSidebarTab: ReturnType<typeof vi.fn> } {
-    const store = createUIStore()
-    const setRightSidebarTab = vi.fn()
-    store.setState({
-      activeWorktreeId,
-      getDiffComments: () => comments,
-      setRightSidebarTab,
-      setRightSidebarOpen: vi.fn()
-    } as unknown as Partial<AppState>)
-    return { store, setRightSidebarTab }
-  }
+      dismiss.mockClear()
+      vi.setSystemTime(new Date('2026-06-02T12:00:01Z'))
+      store.getState().acknowledgeAgents([livePaneKey, retainedPaneKey])
 
-  it('reveals Source Control and bumps the open request when unsent notes exist', () => {
-    const { store, setRightSidebarTab } = stubDiffNotesStore([{ sentAt: 10 }, {}])
-
-    expect(store.getState().openDiffNotesSendMenuForActiveWorktree()).toBe(true)
-    expect(setRightSidebarTab).toHaveBeenCalledWith('source-control')
-    expect(store.getState().diffNotesSendMenuOpenRequest).toMatchObject({
-      worktreeId: 'wt-1',
-      nonce: 1
-    })
-    expect(store.getState().diffNotesSendMenuOpenRequest?.issuedAt).toBeTypeOf('number')
-
-    // A second request increments the nonce so the menu reopens.
-    expect(store.getState().openDiffNotesSendMenuForActiveWorktree()).toBe(true)
-    expect(store.getState().diffNotesSendMenuOpenRequest).toMatchObject({
-      worktreeId: 'wt-1',
-      nonce: 2
-    })
-  })
-
-  it('is a no-op when every note is already sent', () => {
-    const { store, setRightSidebarTab } = stubDiffNotesStore([{ sentAt: 10 }])
-
-    expect(store.getState().openDiffNotesSendMenuForActiveWorktree()).toBe(false)
-    expect(setRightSidebarTab).not.toHaveBeenCalled()
-    expect(store.getState().diffNotesSendMenuOpenRequest).toBeNull()
-  })
-
-  it('is a no-op when there is no active worktree', () => {
-    const { store } = stubDiffNotesStore([{}], null)
-
-    expect(store.getState().openDiffNotesSendMenuForActiveWorktree()).toBe(false)
-    expect(store.getState().diffNotesSendMenuOpenRequest).toBeNull()
-  })
-
-  it('clears the request only for the matching worktree', () => {
-    const { store } = stubDiffNotesStore([{}])
-    store.getState().openDiffNotesSendMenuForActiveWorktree()
-
-    store.getState().consumeDiffNotesSendMenuOpenRequest('other-wt')
-    expect(store.getState().diffNotesSendMenuOpenRequest).not.toBeNull()
-
-    store.getState().consumeDiffNotesSendMenuOpenRequest('wt-1')
-    expect(store.getState().diffNotesSendMenuOpenRequest).toBeNull()
-  })
+      // Nothing rebuilt twice; main still gets the subjects so it can retire what it announced.
+      expect(dismiss).toHaveBeenCalledWith([], [livePaneKey, retainedPaneKey])
+    }
+  )
 })

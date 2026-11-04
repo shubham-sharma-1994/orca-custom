@@ -1,17 +1,19 @@
-// A reopened Claude chat is published as soon as its child spawns, so a CLI that dies before it
-// answers initialize fails a session the user is already looking at. That chat must say why, in
-// the transcript, exactly as a failed first start does.
+// Reopened chats publish before initialize; later startup failure must reach the visible transcript.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { computeAgentSessionPayloadFingerprint } from '../../shared/agent-session-mutation-envelope'
-import type { AgentSessionSubscribeEvent } from '../../shared/agent-session-wire'
+import { computeAgentSessionPayloadFingerprint } from '../../shared/agent-session/lifecycle/agent-session-mutation-envelope'
+import type { AgentSessionSubscribeEvent } from '../../shared/agent-session/agent-session-wire'
 import { hostTestMessage } from '../native-chat/agent-session-wire/structured-agent-session-host-test-data'
-import { waitForStructuredAgentSessionRecovery } from './structured-agent-session-runtime'
-import { createScriptedClaudeRuntime } from './structured-claude-scripted-runtime-test-support'
+import { waitForStructuredAgentSessionRecovery } from './agent-session/structured-agent-session-runtime'
+import {
+  createScriptedClaudeRuntime,
+  scriptedClaudeExitError
+} from './structured-claude-scripted-runtime-test-support'
 
 const SESSION = 'claude-resumed-start'
 const CALLER = { callerKey: 'client-1' }
 const DIAGNOSTIC = 'claude stream-json exited (code 1): claude: not signed in'
+const STARTUP_TEXT = 'Claude stopped before it finished starting. Send your message to try again.'
 
 let claude = createScriptedClaudeRuntime([SESSION])
 
@@ -20,7 +22,6 @@ afterEach(async () => {
   claude = createScriptedClaudeRuntime([SESSION])
 })
 
-/** Status rows the open chat was sent, whether in a batch or in the snapshot a fence change sends. */
 function statusTexts(events: AgentSessionSubscribeEvent[]): string[] {
   return events.flatMap((event) => {
     const items =
@@ -36,13 +37,13 @@ describe('a reopened Claude chat whose CLI dies before initialize', () => {
       ok: true
     })
     await waitForStructuredAgentSessionRecovery()
-    await host.close(SESSION)
+    await host.close(SESSION, 'evict')
 
-    // The user reopens it; this time the CLI never answers, then dies, and its tree is unprovable.
+    // Opening starts nothing; the send retries children whose root exits are observed,
+    // even when descendant cleanup cannot be confirmed.
     claude.behave(SESSION, { initHangs: true, closeUnproven: true })
-    await host.hold(SESSION, 'surface-1')
     const events: AgentSessionSubscribeEvent[] = []
-    host.subscribe({ id: 'sub-1', sessionId: SESSION, emit: (event) => events.push(event) })
+    await host.subscribe({ id: 'sub-1', sessionId: SESSION, emit: (event) => events.push(event) })
     const body = hostTestMessage('hello')
     const fence = host.deps.store.getRecord(SESSION)?.lease.runtimeFence ?? 0
     const sent = await host.send(CALLER, {
@@ -59,21 +60,30 @@ describe('a reopened Claude chat whose CLI dies before initialize', () => {
       body
     })
     expect(sent).toMatchObject({ ok: true, value: { submission: { dispatchState: 'pending' } } })
+    await vi.waitFor(() => expect(claude.children(SESSION)).toHaveLength(2))
 
-    claude.child(SESSION).exit(new Error(DIAGNOSTIC))
-    await waitForStructuredAgentSessionRecovery()
-
-    await vi.waitFor(() =>
-      expect(statusTexts(events)).toContainEqual(
-        expect.stringMatching(/stopped before it finished starting: .*not signed in/)
+    for (let count = 2; count <= 6; count++) {
+      await vi.waitFor(() => expect(claude.children(SESSION)).toHaveLength(count), {
+        timeout: 10_000
+      })
+      await vi.waitFor(() => expect(claude.child(SESSION).initializing).toBe(true))
+      expect(statusTexts(events)).not.toContain(STARTUP_TEXT)
+      claude.child(SESSION).exit(scriptedClaudeExitError(DIAGNOSTIC))
+      await waitForStructuredAgentSessionRecovery()
+      await vi.waitFor(() =>
+        expect(host.deps.store.getRecord(SESSION)?.lease.claimStatus).toBe('released')
       )
+    }
+
+    await vi.waitFor(() => expect(statusTexts(events)).toContainEqual(STARTUP_TEXT))
+    const submission = (await host.journalSnapshot(SESSION)).submissions.find(
+      (entry) => entry.clientMessageId === (sent.ok && sent.value.clientMessageId)
     )
-    // Never written, so it did not happen: refused, not left in doubt.
-    const submission = host
-      .journalSnapshot(SESSION)
-      .submissions.find(
-        (entry) => entry.clientMessageId === (sent.ok && sent.value.clientMessageId)
-      )
-    expect(submission).toMatchObject({ dispatchState: 'rejected' })
+    // Keep stderr in log details, outside the user-facing sentence.
+    expect(submission).toMatchObject({
+      dispatchState: 'rejected',
+      reason: STARTUP_TEXT,
+      rejection: { kind: 'providerStartFailed', detail: { text: DIAGNOSTIC, audience: 'log' } }
+    })
   })
 })

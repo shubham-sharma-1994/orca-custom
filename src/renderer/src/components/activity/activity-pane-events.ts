@@ -1,16 +1,14 @@
 import { isHistoricalActivityState } from './activity-event-state'
+import type { AgentStateHistoryEntry } from '../../../../shared/agent-status/lifecycle/agent-state-history'
 import type {
-  AgentStateHistoryEntry,
-  AgentStatusEntry
-} from '../../../../shared/agent-status-types'
+  AgentStatusEntry,
+  AgentStatusState as ActivityEventState
+} from '../../../../shared/agent-status/contracts/agent-status-types'
 import type { Repo } from '../../../../shared/repo-types'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import type { Worktree } from '../../../../shared/worktree/types'
-import type {
-  ActivityEvent,
-  ActivityEventState,
-  ActivityLiveAgentState
-} from './activity-thread-types'
+import type { ActivityEvent, ActivityLiveAgentState } from './activity-thread-types'
+
 import { EVENTS_PER_PANE_CAP } from './activity-event-cap'
 
 function historyEntrySnapshot(
@@ -27,7 +25,9 @@ function historyEntrySnapshot(
     toolName: undefined,
     toolInput: undefined,
     lastAssistantMessage: undefined,
-    interrupted: history.interrupted
+    interrupted: history.interrupted,
+    // The live row's main agent belongs to its current state, not to this snapshot.
+    mainAgent: history.mainAgent
   }
 }
 

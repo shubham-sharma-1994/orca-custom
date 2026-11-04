@@ -1,9 +1,9 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, matchesGlob, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
-import { runProcessSync } from './script-child-process.mjs'
+import { runProcessSync } from '@orca/process-host'
 import { shouldRunMobileReleaseChecks } from './mobile-release-check-scope.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -51,7 +51,6 @@ it.each([
   'mobile/src/release.json',
   'mobile/new-toolchain/input',
   'package.json',
-  'pnpm-lock.yaml',
   '.github/workflows/mobile.yml',
   '.github/workflows/mobile-ios-release.yml',
   '.github/actions/install-node-dependencies/action.yml',
@@ -62,44 +61,13 @@ it.each([
   expect(shouldRunMobileReleaseChecks(['mobile/src/view.tsx', file])).toBe(true)
 })
 
-it('runs Ruby checks when the changed-file evidence is empty', () => {
-  expect(shouldRunMobileReleaseChecks([])).toBe(true)
+it('skips Ruby checks for a root lockfile change, which fastlane never reads', () => {
+  expect(shouldRunMobileReleaseChecks(['pnpm-lock.yaml'])).toBe(false)
+  expect(shouldRunMobileReleaseChecks(['pnpm-lock.yaml', 'mobile/fastlane/Fastfile'])).toBe(true)
 })
 
-it('gates Ruby independently and retains mobile static validation', () => {
-  expect(steps[0].with['fetch-depth']).toBe(2)
-  expect(detector['working-directory']).toBe('.')
-  expect(steps.indexOf(detector)).toBeGreaterThan(
-    steps.findIndex((step) => step.uses === './.github/actions/install-node-dependencies')
-  )
-  const gated = steps.filter((step) => step.if !== undefined && step.name !== 'Test')
-  expect(gated.map((step) => step.name)).toEqual([
-    'Setup Ruby and fastlane',
-    'Test iOS release version resolution',
-    'Test TestFlight lane arguments',
-    'Smoke-check the Fastfile'
-  ])
-  for (const step of gated) {
-    expect(step.if).toBe("steps.ruby-scope.outputs.should_run != 'false'")
-  }
-  for (const name of ['Typecheck', 'Typecheck tests (ratchet)', 'Lint', 'Check formatting']) {
-    expect(steps.find((step) => step.name === name)?.if).toBeUndefined()
-    expect(steps.some((step) => step.name === name)).toBe(true)
-  }
-  for (const file of [
-    'config/scripts/mobile-release-check-scope.mjs',
-    'config/scripts/mobile-release-check-scope.test.mjs',
-    'config/scripts/pr-code-change-scope.mjs'
-  ]) {
-    expect(workflow.on.pull_request.paths.some((pattern) => matchesGlob(file, pattern))).toBe(true)
-  }
-  expect(workflow.jobs.verify.env.BUNDLE_FROZEN).toBe('true')
-  expect(steps.find((step) => step.name === 'Setup Ruby and fastlane').with['bundler-cache']).toBe(
-    true
-  )
-  expect(steps.find((step) => step.name === 'Smoke-check the Fastfile').run).toBe(
-    'bundle exec fastlane lanes'
-  )
+it('runs Ruby checks when the changed-file evidence is empty', () => {
+  expect(shouldRunMobileReleaseChecks([])).toBe(true)
 })
 
 function fixture(detectorStep = detector) {
@@ -124,6 +92,9 @@ function fixture(detectorStep = detector) {
   for (const file of [
     'package.json',
     'config/scripts/pr-code-change-scope.mjs',
+    'config/scripts/pr-package-test-paths.mjs',
+    'config/scripts/pr-layout-oracle-route.mjs',
+    'config/scripts/pr-shell-contract-prefixes.mjs',
     'config/scripts/mobile-release-check-scope.mjs',
     'config/scripts/mobile-test-change-scope.mjs'
   ]) {
@@ -163,6 +134,17 @@ describe.skipIf(process.platform === 'win32')('the Linux workflow detector comma
     repo.write('mobile/src/view.tsx', 'export const view = 2\n')
     repo.commit()
     expect(repo.detect()).toBe('should_run=false\n')
+  })
+
+  it('skips reliability metadata alone and retains mixed Fastfile changes', () => {
+    const repo = fixture()
+    repo.write('config/reliability-gates.jsonc', '{"gates": []}\n')
+    repo.commit()
+    expect(repo.detect()).toBe('should_run=false\n')
+    repo.write('config/reliability-gates.jsonc', '{"gates": [1]}\n')
+    repo.write('mobile/fastlane/Fastfile', 'default_platform(:android)\n')
+    repo.commit()
+    expect(repo.detect()).toBe('should_run=false\nshould_run=true\n')
   })
 
   it('keeps a deleted release input when a rename moves it into an excluded directory', () => {

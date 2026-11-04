@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { projectSourceControlActionLaunch } from '../../../shared/source-control/ai/recipes/source-control-action-launch-preferences'
 import type { AgentLaunchRouteStore } from './agent-launch-route-input'
 
 const mocks = vi.hoisted(() => ({
@@ -13,18 +14,16 @@ vi.mock('@/lib/agent-launch-route-input', () => ({
 }))
 vi.mock('@/lib/agent-launch-routing', () => ({
   resolveAgentLaunchRoute: mocks.resolveAgentLaunchRoute,
-  structuredAgentLaunchSupported: mocks.structuredAgentLaunchSupported
+  structuredAgentLaunchSupported: mocks.structuredAgentLaunchSupported,
+  structuredAgentLaunchDowngrade: () => null
 }))
 vi.mock('@/lib/structured-agent-launch-settlement', () => ({
   beginStructuredAgentLaunchSettlement: mocks.beginStructuredAgentLaunchSettlement
 }))
 
-import {
-  adoptAgentSessionLaunchVerdict,
-  planAgentSessionLaunch,
-  structuredAgentSessionLaunchFeasible
-} from './agent-session-launch-plan'
+import { planAgentSessionLaunch } from './agent-session-launch-plan'
 
+// oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the route builder is mocked, so this store is only forwarded and never read.
 const store = { settings: {} } as unknown as AgentLaunchRouteStore
 const ROUTE_INPUT = { agent: 'codex', executionHostId: 'local' }
 const STRUCTURED = { kind: 'structured', sessionId: 'session-1' }
@@ -42,203 +41,59 @@ describe('planAgentSessionLaunch', () => {
     })
   })
 
-  it('decides the route once, from the builder input, and never again on launch', async () => {
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'codex',
-      workspace: { kind: 'git-worktree', worktreeId: 'wt-1' },
-      prompt: 'Fix it',
-      promptDelivery: 'draft'
-    })
-
-    expect(plan.route).toBe('structured-native-chat')
-    expect(mocks.buildAgentLaunchRouteInput).toHaveBeenCalledWith(
-      store,
-      expect.objectContaining({ agent: 'codex', prompt: 'Fix it', promptDelivery: 'draft' })
-    )
-    expect(mocks.resolveAgentLaunchRoute).toHaveBeenCalledWith(ROUTE_INPUT)
-    expect(mocks.structuredAgentLaunchSupported).not.toHaveBeenCalled()
-
-    await plan.launch(hooks)
-    await plan.launch(hooks)
-    expect(mocks.buildAgentLaunchRouteInput).toHaveBeenCalledOnce()
-    expect(mocks.resolveAgentLaunchRoute).toHaveBeenCalledOnce()
-  })
-
-  it('hands the settle loop exactly the prompt, mode, resume source, and delivery hook it planned on', async () => {
-    const onPromptDelivered = vi.fn()
-    const resumeFrom = { providerSessionId: 'provider-1' }
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'claude',
-      workspace: { kind: 'folder', worktreeId: 'folder:ws-1' },
-      prompt: 'Review this',
-      promptDelivery: 'submit-after-ready',
-      resumeFrom,
-      onPromptDelivered
-    })
-
-    await expect(plan.launch(hooks)).resolves.toBe(STRUCTURED)
-    expect(mocks.beginStructuredAgentLaunchSettlement).toHaveBeenCalledWith(
-      'folder:ws-1',
-      'claude',
-      {
-        prompt: 'Review this',
-        promptDelivery: 'submit-after-ready',
-        resumeFrom,
-        onPromptDelivered
-      },
-      hooks
-    )
-  })
-
-  it('sends no delivery fields the request did not carry', async () => {
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'codex',
-      workspace: { kind: 'folder', worktreeId: 'folder:ws-1' }
-    })
-
-    await plan.launch(hooks)
-    expect(mocks.beginStructuredAgentLaunchSettlement).toHaveBeenCalledWith(
-      'folder:ws-1',
-      'codex',
-      {},
-      hooks
-    )
-  })
-
-  it.each(['legacy-native-chat', 'terminal-tui'] as const)(
-    'returns null from launch on the %s route without touching the loop',
-    async (route) => {
-      mocks.resolveAgentLaunchRoute.mockReturnValue(route)
+  it.each<Readonly<Record<string, string>> | undefined>([
+    undefined,
+    {},
+    { model: 'true', effort: 'high' }
+  ])(
+    'captures the owner route views and selects a complete Chat replacement (%j)',
+    async (alternative) => {
+      const projection = projectSourceControlActionLaunch(
+        {
+          agentId: 'codex',
+          agentArgs: `-c 'model="true"'`,
+          launchPreferences: {
+            agentId: 'codex',
+            modelSelection: {
+              base: 'default',
+              options: { effort: { agentId: 'codex', value: 'high' } }
+            }
+          }
+        },
+        'codex',
+        { basePrompt: 'Fix checks' }
+      )
+      expect(projection.agentArgs).toBe(`-c 'model="true"'`)
+      expect(projection.sessionOptions).toEqual({ effort: 'high' })
+      expect(projection.chatSessionOptions).toEqual({ model: 'true', effort: 'high' })
+      const base = { ...projection.sessionOptions }
+      const chat = alternative === undefined ? undefined : { ...alternative }
       const plan = planAgentSessionLaunch(store, {
-        agent: 'codex',
-        workspace: { kind: 'git-worktree', worktreeId: 'wt-1' }
-      })
-
-      expect(plan.route).toBe(route)
-      await expect(plan.launch(hooks)).resolves.toBeNull()
-      expect(plan.begin(hooks)).toBeNull()
-      expect(mocks.beginStructuredAgentLaunchSettlement).not.toHaveBeenCalled()
-    }
-  )
-
-  it('returns null for an agent that cannot hold a structured session even on the structured route', async () => {
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'gemini',
-      workspace: { kind: 'git-worktree', worktreeId: 'wt-1' }
-    })
-
-    await expect(plan.launch(hooks)).resolves.toBeNull()
-    expect(plan.begin(hooks)).toBeNull()
-    expect(mocks.beginStructuredAgentLaunchSettlement).not.toHaveBeenCalled()
-  })
-
-  it('launches into the workspace created after planning when the target names one', async () => {
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'codex',
-      workspace: { kind: 'git-worktree', repoId: 'repo-1' },
-      prompt: 'Fix it',
-      promptDelivery: 'auto-submit'
-    })
-
-    await plan.launch(hooks, { worktreeId: 'wt-created' })
-    expect(mocks.beginStructuredAgentLaunchSettlement).toHaveBeenCalledWith(
-      'wt-created',
-      'codex',
-      { prompt: 'Fix it', promptDelivery: 'auto-submit' },
-      hooks
-    )
-  })
-
-  it('refuses to launch a prospective workspace that was never created', async () => {
-    const plan = planAgentSessionLaunch(store, {
-      agent: 'codex',
-      workspace: { kind: 'git-worktree', repoId: 'repo-1' }
-    })
-
-    await expect(plan.launch(hooks)).rejects.toThrow(/workspace/)
-    expect(mocks.beginStructuredAgentLaunchSettlement).not.toHaveBeenCalled()
-  })
-})
-
-describe('structuredAgentSessionLaunchFeasible', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.buildAgentLaunchRouteInput.mockReturnValue(ROUTE_INPUT)
-    mocks.structuredAgentLaunchSupported.mockReturnValue(true)
-  })
-
-  it.each([true, false])('answers from feasibility alone (supported=%s)', (supported) => {
-    mocks.structuredAgentLaunchSupported.mockReturnValue(supported)
-    const settings = { experimentalStructuredNativeChat: true } as never
-
-    expect(
-      structuredAgentSessionLaunchFeasible(store, {
+        requestId: 'route-views',
         agent: 'codex',
         workspace: { kind: 'git-worktree', worktreeId: 'wt-1' },
-        settings
+        launchOptions: base,
+        ...(chat !== undefined ? { chatLaunchOptions: chat } : {})
       })
-    ).toBe(supported)
-    expect(mocks.resolveAgentLaunchRoute).not.toHaveBeenCalled()
-    expect(mocks.beginStructuredAgentLaunchSettlement).not.toHaveBeenCalled()
-  })
-
-  it('builds the input from the named settings, not the store copy', () => {
-    const settings = { experimentalStructuredNativeChat: true } as never
-    structuredAgentSessionLaunchFeasible(store, {
-      agent: 'codex',
-      workspace: { kind: 'git-worktree', worktreeId: 'wt-1' },
-      settings
-    })
-
-    expect(mocks.buildAgentLaunchRouteInput).toHaveBeenCalledWith(store, {
-      agent: 'codex',
-      workspace: { kind: 'git-worktree', worktreeId: 'wt-1' }
-    })
-    // The builder's input carries no settings, so seeing them here proves the named copy won.
-    expect(mocks.structuredAgentLaunchSupported).toHaveBeenCalledWith(
-      expect.objectContaining({ ...ROUTE_INPUT, settings })
-    )
-  })
-})
-
-describe('adoptAgentSessionLaunchVerdict', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.beginStructuredAgentLaunchSettlement.mockReturnValue({
-      sessionId: 'session-1',
-      settlement: Promise.resolve(STRUCTURED)
-    })
-  })
-
-  it('re-enters a persisted verdict without resolving the route again', async () => {
-    const plan = adoptAgentSessionLaunchVerdict({
-      route: 'structured-native-chat',
-      agent: 'codex',
-      prompt: 'Fix it',
-      promptDelivery: 'draft'
-    })
-
-    expect(plan.route).toBe('structured-native-chat')
-    await expect(plan.launch(hooks, { worktreeId: 'wt-recovered' })).resolves.toBe(STRUCTURED)
-    expect(mocks.buildAgentLaunchRouteInput).not.toHaveBeenCalled()
-    expect(mocks.resolveAgentLaunchRoute).not.toHaveBeenCalled()
-    expect(mocks.structuredAgentLaunchSupported).not.toHaveBeenCalled()
-    expect(mocks.beginStructuredAgentLaunchSettlement).toHaveBeenCalledWith(
-      'wt-recovered',
-      'codex',
-      { prompt: 'Fix it', promptDelivery: 'draft' },
-      hooks
-    )
-  })
-
-  it('keeps a non-structured verdict out of the loop', async () => {
-    const plan = adoptAgentSessionLaunchVerdict({
-      route: 'terminal-tui',
-      agent: 'codex',
-      worktreeId: 'wt-1'
-    })
-
-    await expect(plan.launch(hooks)).resolves.toBeNull()
-    expect(mocks.beginStructuredAgentLaunchSettlement).not.toHaveBeenCalled()
-  })
+      base.effort = 'low'
+      if (chat && 'model' in chat) {
+        chat.model = 'later-model'
+      }
+      expect(plan.launchOptions).toEqual({ effort: 'high' })
+      await plan.launch(hooks)
+      expect(mocks.beginStructuredAgentLaunchSettlement).toHaveBeenCalledWith(
+        'wt-1',
+        'codex',
+        {
+          requestId: 'route-views',
+          executionHostId: 'local',
+          launchOptions: alternative ?? { effort: 'high' }
+        },
+        hooks
+      )
+      const request = mocks.beginStructuredAgentLaunchSettlement.mock.calls[0][2]
+      expect(request).not.toHaveProperty('chatLaunchOptions')
+      expect(request).not.toHaveProperty('chatSessionOptions')
+    }
+  )
 })

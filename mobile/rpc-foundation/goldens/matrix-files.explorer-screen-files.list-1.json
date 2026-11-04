@@ -1,48 +1,9 @@
 {
+  "goldenFormatVersion": 6,
   "operation": "files.explorer-screen",
   "family": "files.explorer-screen",
   "namedDeltas": [],
-  "runnerVersion": 1,
-  "baseline": "02a55944347346065453e179e071e64d9ae861dc",
-  "lockfileSha256": "9317f3a98ab047f9f96fe26fd8531b8a632ac5954064b322f41a904148cbf6bb",
-  "recorderSha256": "0317fe2aebe4743ce5e7ae194531aa91b4fe0a84df457640851fe6dfdb9362af",
-  "adapterSha256": "7a42a348f4407b94cf75ac77a4b6b783b7d28103b1ae1d111d2708dab0dd4a0c",
-  "scenarioSha256": "38b5590173c1f6791d1b35c0f036e2f844ed4b0e39c880e8e376c5f314adaade",
-  "platform": "darwin",
-  "scenarioVersion": 1,
-  "projectionVersion": 2,
-  "goldenFormatVersion": 5,
   "values": {
-    "13db9ec07bae": {
-      "crash": {
-        "$rpc": "null"
-      },
-      "elements": {
-        "ChevronLeft": 1,
-        "Pressable": 2,
-        "SafeAreaView": 1,
-        "Text": 4,
-        "View": 4
-      },
-      "labels": ["Back to session"],
-      "rows": [],
-      "text": ["Files", "orca-files", "outer refused", "Retry"]
-    },
-    "17ee98fb7a54": {
-      "crash": {
-        "$rpc": "null"
-      },
-      "elements": {
-        "ChevronLeft": 1,
-        "Pressable": 2,
-        "SafeAreaView": 1,
-        "Text": 4,
-        "View": 4
-      },
-      "labels": ["Back to session"],
-      "rows": [],
-      "text": ["Files", "orca-files", "Unknown method", "Retry"]
-    },
     "1b7ad474c481": {
       "name": "files.list#1",
       "ordinal": 3,
@@ -107,6 +68,22 @@
           }
         }
       }
+    },
+    "246ae91b1e0f": {
+      "crash": {
+        "$rpc": "null"
+      },
+      "elements": {
+        "ChevronLeft": 1,
+        "FolderOpen": 1,
+        "Pressable": 1,
+        "SafeAreaView": 1,
+        "Text": 3,
+        "View": 7
+      },
+      "labels": ["Back to session"],
+      "rows": [],
+      "text": ["Files", "orca-files", "No files found"]
     },
     "25e183d5f7f4": {
       "name": "files.list#1",
@@ -178,21 +155,6 @@
           "ok": false
         }
       }
-    },
-    "345725f4b97d": {
-      "crash": {
-        "$rpc": "null"
-      },
-      "elements": {
-        "ChevronLeft": 1,
-        "Pressable": 2,
-        "SafeAreaView": 1,
-        "Text": 4,
-        "View": 4
-      },
-      "labels": ["Back to session"],
-      "rows": [],
-      "text": ["Files", "orca-files", "transport failure", "Retry"]
     },
     "41c86594aed3": {
       "name": "files.list#1",
@@ -412,41 +374,71 @@
       "ordinal": 4,
       "json": "{\"id\":\"frame-2\",\"deviceToken\":\"recording-device\",\"method\":\"files.list\",\"params\":{\"worktree\":\"id:wt-files\"}}"
     },
+    "7e1b93aa6c0d": {
+      "crash": {
+        "$rpc": "null"
+      },
+      "elements": {
+        "ChevronLeft": 1,
+        "CircleAlert": 1,
+        "Pressable": 2,
+        "SafeAreaView": 1,
+        "Text": 5,
+        "View": 7
+      },
+      "labels": ["Back to session"],
+      "rows": [],
+      "text": ["Files", "orca-files", "Unable to Load", "outer refused", "Retry"]
+    },
     "858aa6e98236": {
       "name": "files.readDir#1",
       "ordinal": 2,
       "json": "{\"id\":\"frame-1\",\"deviceToken\":\"recording-device\",\"method\":\"files.readDir\",\"params\":{\"worktree\":\"id:wt-files\",\"relativePath\":\"\"}}"
     },
-    "a0139a06ef98": {
+    "948a6977def7": {
       "crash": {
         "$rpc": "null"
       },
       "elements": {
         "ChevronLeft": 1,
+        "Defs": 1,
+        "FlatList": 1,
+        "LinearGradient": 1,
         "Pressable": 1,
+        "Rect": 1,
         "SafeAreaView": 1,
-        "Text": 3,
-        "View": 4
+        "Search": 1,
+        "Stop": 2,
+        "Svg": 1,
+        "Text": 2,
+        "TextInput": 1,
+        "View": 11
+      },
+      "labels": ["Back to session", "Filter files"],
+      "rows": ["dir:src", "file:README.md"],
+      "text": ["Files", "orca-files - Showing first 5000"]
+    },
+    "b4d12c8ac5a5": {
+      "crash": {
+        "$rpc": "null"
+      },
+      "elements": {
+        "ChevronLeft": 1,
+        "CircleAlert": 1,
+        "Pressable": 2,
+        "SafeAreaView": 1,
+        "Text": 5,
+        "View": 7
       },
       "labels": ["Back to session"],
       "rows": [],
-      "text": ["Files", "orca-files", "No files found"]
-    },
-    "b85511fb8929": {
-      "crash": {
-        "$rpc": "null"
-      },
-      "elements": {
-        "ChevronLeft": 1,
-        "FlatList": 1,
-        "Pressable": 1,
-        "SafeAreaView": 1,
-        "Text": 2,
-        "View": 3
-      },
-      "labels": ["Back to session"],
-      "rows": ["dir:src", "file:README.md"],
-      "text": ["Files", "orca-files", " - Showing first 5000"]
+      "text": [
+        "Files",
+        "orca-files",
+        "Unable to Load",
+        "The host sent a reply this app could not read (files.list)",
+        "Retry"
+      ]
     },
     "bec439845fd2": {
       "name": "files.list#1",
@@ -481,6 +473,38 @@
           }
         }
       }
+    },
+    "c721e7f4a5c5": {
+      "crash": {
+        "$rpc": "null"
+      },
+      "elements": {
+        "ActivityIndicator": 1,
+        "ChevronLeft": 1,
+        "Pressable": 1,
+        "SafeAreaView": 1,
+        "Text": 3,
+        "View": 7
+      },
+      "labels": ["Back to session"],
+      "rows": [],
+      "text": ["Files", "orca-files", "Loading files…"]
+    },
+    "d893585d9ee2": {
+      "crash": {
+        "$rpc": "null"
+      },
+      "elements": {
+        "ChevronLeft": 1,
+        "CircleAlert": 1,
+        "Pressable": 2,
+        "SafeAreaView": 1,
+        "Text": 5,
+        "View": 7
+      },
+      "labels": ["Back to session"],
+      "rows": [],
+      "text": ["Files", "orca-files", "Unable to Load", "Unknown method", "Retry"]
     },
     "e1c4922557f8": {
       "name": "files.list#1",
@@ -517,22 +541,6 @@
         }
       }
     },
-    "e91880eefe86": {
-      "crash": {
-        "$rpc": "null"
-      },
-      "elements": {
-        "ActivityIndicator": 1,
-        "ChevronLeft": 1,
-        "Pressable": 1,
-        "SafeAreaView": 1,
-        "Text": 2,
-        "View": 4
-      },
-      "labels": ["Back to session"],
-      "rows": [],
-      "text": ["Files", "orca-files"]
-    },
     "eb79a9b3682a": {
       "status": "fulfilled",
       "startedAt": 0,
@@ -541,25 +549,21 @@
         "$rpc": "undefined"
       }
     },
-    "eededbc093fb": {
+    "f8c41c06d18c": {
       "crash": {
         "$rpc": "null"
       },
       "elements": {
         "ChevronLeft": 1,
+        "CircleAlert": 1,
         "Pressable": 2,
         "SafeAreaView": 1,
-        "Text": 4,
-        "View": 4
+        "Text": 5,
+        "View": 7
       },
       "labels": ["Back to session"],
       "rows": [],
-      "text": [
-        "Files",
-        "orca-files",
-        "The host sent a reply this app could not read (files.list)",
-        "Retry"
-      ]
+      "text": ["Files", "orca-files", "Unable to Load", "transport failure", "Retry"]
     },
     "f9892850cc0f": {
       "name": "files.list#1",
@@ -605,7 +609,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "e91880eefe86",
+          "state": "c721e7f4a5c5",
           "effects": []
         }
       },
@@ -617,7 +621,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "b85511fb8929",
+          "state": "948a6977def7",
           "effects": []
         }
       },
@@ -629,7 +633,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "eededbc093fb",
+          "state": "b4d12c8ac5a5",
           "effects": []
         }
       },
@@ -641,7 +645,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "eededbc093fb",
+          "state": "b4d12c8ac5a5",
           "effects": []
         }
       },
@@ -653,7 +657,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "eededbc093fb",
+          "state": "b4d12c8ac5a5",
           "effects": []
         }
       },
@@ -665,7 +669,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "eededbc093fb",
+          "state": "b4d12c8ac5a5",
           "effects": []
         }
       },
@@ -677,7 +681,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "eededbc093fb",
+          "state": "b4d12c8ac5a5",
           "effects": []
         }
       },
@@ -689,7 +693,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "13db9ec07bae",
+          "state": "7e1b93aa6c0d",
           "effects": []
         }
       },
@@ -701,7 +705,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "17ee98fb7a54",
+          "state": "d893585d9ee2",
           "effects": []
         }
       },
@@ -713,7 +717,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "17ee98fb7a54",
+          "state": "d893585d9ee2",
           "effects": []
         }
       },
@@ -725,7 +729,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "345725f4b97d",
+          "state": "f8c41c06d18c",
           "effects": []
         }
       },
@@ -737,7 +741,7 @@
           "settlements": {
             "mount": "eb79a9b3682a"
           },
-          "state": "a0139a06ef98",
+          "state": "246ae91b1e0f",
           "effects": []
         }
       }

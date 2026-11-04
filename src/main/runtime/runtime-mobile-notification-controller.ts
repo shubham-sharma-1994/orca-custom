@@ -1,5 +1,16 @@
+import { agentSessionExecutionLocationsEqual } from '../../shared/agent-session/lifecycle/agent-session-record'
+import {
+  NotificationAttentionReadFrontiers,
+  notificationWasAcknowledged
+} from '../../shared/notification-attention-acknowledgement'
+import type { NotificationAttentionAcknowledgement } from '../../shared/notification-settings-types'
 import { reserveNotificationCooldown } from '../../shared/notification-burst-cooldown'
-import type { AgentStatusState } from '../../shared/agent-status-types'
+import type { ExecutionHostId } from '../../shared/execution-host'
+import type { AgentStatusState } from '../../shared/agent-status/contracts/agent-status-types'
+import type {
+  StructuredAttentionOrigin,
+  StructuredAttentionState
+} from '../../shared/agent-session/agent-session-attention'
 import type {
   MobilePushTestResult,
   MobilePushRegisterInput,
@@ -8,10 +19,9 @@ import type {
 import { MobileNotificationReplayBuffer } from './mobile-notification-replay'
 import { notifyRuntimeListeners } from './runtime-async-boundaries'
 import { getRuntimeDesktopSurface } from './runtime-desktop-surface'
-import {
-  MobileNotificationDismissalStore,
-  type DeliveredNotificationIdentity
-} from './mobile-notification-dismissal-store'
+import { MobileNotificationDismissalStore } from './mobile-notification-dismissal-store'
+import { DesktopClientPresenceTracker } from './desktop-client-presence-tracker'
+import type { DeliveredNotificationIdentity } from '../../shared/mobile-notification-identity'
 
 export type MobileNotificationDispatchEvent = {
   type: 'notification'
@@ -23,12 +33,19 @@ export type MobileNotificationDispatchEvent = {
   title: string
   body: string
   worktreeId?: string
+  workspaceExecutionHostId?: ExecutionHostId | null
+  /** The pane the phone opens on tap; old phones ignore it and open the workspace's default tab. */
+  paneKey?: string
+  /** See `NotificationDispatchRequest.executionHost`; old phones ignore it and open the desktop's. */
+  executionHost?: `runtime:${string}`
   notificationId?: string
   notificationSeq?: number
   notificationEpoch?: string
-  // Why: background push must tell "needs input" from "finished" without re-deriving
-  // it from the title. Optional and additive — old clients ignore it.
+  // Additive state distinguishes input-needed from finished in push; old clients ignore it.
   agentState?: AgentStatusState
+  /** See `NotificationDispatchRequest.attentionKey`: cooldowns key on it instead of the workspace. */
+  attentionKey?: string
+  structuredOrigin?: StructuredAttentionOrigin
 }
 
 export type MobileNotificationDismissEvent = {
@@ -36,6 +53,7 @@ export type MobileNotificationDismissEvent = {
   notificationId: string
   notificationSeq?: number
   notificationEpoch?: string
+  dismissedDelivery?: DeliveredNotificationIdentity
 }
 
 export type MobileNotificationEvent =
@@ -50,14 +68,25 @@ export type MobilePushRegistrar = {
 }
 
 export class RuntimeMobileNotificationController {
+  private readonly attentionReads = new NotificationAttentionReadFrontiers()
   private readonly listeners = new Set<(event: MobileNotificationEvent) => void>()
   private readonly legacyCooldown = new Map<string, number>()
   private readonly replay = new MobileNotificationReplayBuffer()
   private pushRegistrar: MobilePushRegistrar | null = null
   private dismissalStore: MobileNotificationDismissalStore | null = null
+  private readonly desktopClients = new DesktopClientPresenceTracker()
 
   configureDismissalStore(userDataPath: string): void {
     this.dismissalStore = new MobileNotificationDismissalStore(userDataPath)
+  }
+
+  /** Waits for the pending dismissal write without closing the store. */
+  flushDismissals(): Promise<void> {
+    return this.dismissalStore?.flush() ?? Promise.resolve()
+  }
+
+  closeDismissals(): Promise<void> {
+    return this.dismissalStore?.close() ?? Promise.resolve()
   }
 
   reconcileDismissedPushes(
@@ -87,6 +116,27 @@ export class RuntimeMobileNotificationController {
     return (await this.pushRegistrar?.unregister(deviceId)) ?? { unregistered: false }
   }
 
+  /** `bindForget` runs for a connection without a live report, before it is recorded. */
+  reportDesktopClientPresence(
+    connectionId: string,
+    away: boolean,
+    bindForget: (forget: () => void) => void
+  ): void {
+    if (!this.desktopClients.has(connectionId)) {
+      bindForget(() => this.desktopClients.forget(connectionId))
+    }
+    this.desktopClients.report(connectionId, away, Date.now())
+  }
+
+  // Unknown must not silence phones; require fresh desktop/local activity. Headless serves use attached desktops, whose silence means away (#31570).
+  private resolveDesktopAway(): boolean | undefined {
+    if (this.desktopClients.anyPresent(Date.now())) {
+      return false
+    }
+    const surface = getRuntimeDesktopSurface()
+    return surface.isAwayForMobileNotifications ? surface.isAwayForMobileNotifications() : true
+  }
+
   onDispatched(listener: (event: MobileNotificationEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -98,19 +148,25 @@ export class RuntimeMobileNotificationController {
 
   dispatch(event: MobileNotificationEvent): void {
     if (event.type === 'notification') {
+      if (this.attentionReads.covers({ ...event, origin: event.structuredOrigin })) {
+        return
+      }
       // Decide once before recording so reconnect and buffer eviction cannot reset cooldown.
       const legacySocketAllowed =
         event.desktopAllowed !== false &&
         (event.emittedAt === undefined ||
           reserveNotificationCooldown(
             this.legacyCooldown,
-            event.worktreeId ?? 'global',
+            JSON.stringify([
+              event.executionHost,
+              event.attentionKey ?? event.worktreeId ?? 'global'
+            ]),
             event.emittedAt
           ))
       event = {
         ...event,
         legacySocketAllowed,
-        desktopAway: getRuntimeDesktopSurface().isAwayForMobileNotifications?.()
+        desktopAway: this.resolveDesktopAway()
       }
     }
     const seq = this.replay.record(event)
@@ -144,7 +200,57 @@ export class RuntimeMobileNotificationController {
   }
 
   dismiss(notificationId: string): void {
+    // Reads rebuild ids for alerts that never went out (chat panes, silenced workers); each would cost a silent push.
+    if (this.dismissalStore && !this.dismissalStore.hasLiveDelivery(notificationId)) {
+      return
+    }
     this.dispatch({ type: 'dismiss', notificationId })
+  }
+
+  private retireDelivery(delivery: DeliveredNotificationIdentity): void {
+    this.dispatch({
+      type: 'dismiss',
+      notificationId: delivery.notificationId,
+      dismissedDelivery: {
+        notificationId: delivery.notificationId,
+        notificationEpoch: delivery.notificationEpoch,
+        notificationSeq: delivery.notificationSeq
+      }
+    })
+  }
+
+  acknowledgeAttention(
+    acknowledgement: NotificationAttentionAcknowledgement,
+    executionHost?: MobileNotificationDispatchEvent['executionHost']
+  ): void {
+    this.attentionReads.accept(acknowledgement, executionHost)
+    for (const delivery of this.dismissalStore?.liveDeliveries() ?? []) {
+      if (
+        notificationWasAcknowledged(
+          { ...delivery, origin: delivery.structuredOrigin },
+          acknowledgement,
+          executionHost
+        )
+      ) {
+        this.retireDelivery(delivery)
+      }
+    }
+  }
+
+  reconcileStructuredPromptAttention(state: StructuredAttentionState): void {
+    const pending = new Set(state.pendingPromptIds)
+    for (const delivery of this.dismissalStore?.liveDeliveries() ?? []) {
+      const origin = delivery.structuredOrigin
+      if (
+        origin?.cause.kind === 'prompt' &&
+        origin.sessionId === state.sessionId &&
+        agentSessionExecutionLocationsEqual(origin.scope, state.scope) &&
+        delivery.executionHost === state.executionHost &&
+        !pending.has(origin.cause.promptId)
+      ) {
+        this.retireDelivery(delivery)
+      }
+    }
   }
 
   async dispatchPlugin(input: {

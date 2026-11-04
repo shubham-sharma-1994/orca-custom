@@ -2,7 +2,7 @@ import type { GitHubCreateIssueFields, GitHubIssueUpdate } from '../../shared/is
 import type { GitHubOwnerRepo } from '../../shared/github/pull-request-types'
 import type { GitHubPRReviewCommentInput } from '../../shared/github/comment-types'
 import type { Repo } from '../../shared/repo-types'
-import type { LocalProjectGhExecOptions } from '../project-runtime-git-options'
+import type { LocalProjectGhExecOptions } from '../workspaces/execution-host/project-runtime-git-options'
 import {
   addIssueComment,
   addPRReviewComment,
@@ -10,6 +10,7 @@ import {
   createIssue,
   updateIssue
 } from '../github/client'
+import { getRepoRoutingConnectionId } from '../../shared/execution-host'
 
 type LocalGitArgs = [] | [LocalProjectGhExecOptions]
 
@@ -33,7 +34,7 @@ export class RuntimeGitHubIssueCommentCommands {
       title,
       body,
       repo.issueSourcePreference,
-      repo.connectionId ?? null,
+      getRepoRoutingConnectionId(repo),
       fields,
       ...this.deps.getLocalGitArgs(repo)
     )
@@ -42,15 +43,18 @@ export class RuntimeGitHubIssueCommentCommands {
   async updateRepoIssue(
     repoSelector: string,
     number: number,
-    updates: GitHubIssueUpdate
+    updates: GitHubIssueUpdate,
+    ownerRepo?: GitHubOwnerRepo
   ): Promise<Awaited<ReturnType<typeof updateIssue>>> {
     const repo = await this.deps.resolveRepo(repoSelector)
     return updateIssue(
       repo.path,
       number,
       updates,
-      repo.connectionId ?? null,
-      ...this.deps.getLocalGitArgs(repo)
+      getRepoRoutingConnectionId(repo),
+      this.deps.getLocalGitArgs(repo)[0],
+      repo.issueSourcePreference,
+      ...(ownerRepo ? ([ownerRepo] as const) : ([] as const))
     )
   }
 
@@ -58,16 +62,19 @@ export class RuntimeGitHubIssueCommentCommands {
     repoSelector: string,
     number: number,
     body: string,
-    prRepo?: GitHubOwnerRepo | null
+    prRepo?: GitHubOwnerRepo | null,
+    type?: 'issue' | 'pr'
   ): Promise<Awaited<ReturnType<typeof addIssueComment>>> {
     const repo = await this.deps.resolveRepo(repoSelector)
     return addIssueComment(
       repo.path,
       number,
       body,
-      repo.connectionId ?? null,
+      getRepoRoutingConnectionId(repo),
       prRepo ?? null,
-      ...this.deps.getLocalGitArgs(repo)
+      this.deps.getLocalGitArgs(repo)[0],
+      // Why: the issue source selector only scopes issues; PR comments keep their resolution.
+      type === 'pr' ? undefined : repo.issueSourcePreference
     )
   }
 
@@ -78,7 +85,7 @@ export class RuntimeGitHubIssueCommentCommands {
     const repo = await this.deps.resolveRepo(repoSelector)
     return addPRReviewComment({
       repoPath: repo.path,
-      connectionId: repo.connectionId ?? null,
+      connectionId: getRepoRoutingConnectionId(repo),
       localGitOptions: this.deps.getLocalGitArgs(repo)[0],
       ...args
     })
@@ -105,7 +112,7 @@ export class RuntimeGitHubIssueCommentCommands {
       args.threadId,
       args.path,
       args.line,
-      repo.connectionId ?? null,
+      getRepoRoutingConnectionId(repo),
       args.prRepo ?? null,
       ...this.deps.getLocalGitArgs(repo)
     )

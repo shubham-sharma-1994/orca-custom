@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HostedReviewInfo } from '../../../../shared/hosted-review'
+import type { HostedReviewInfo } from '../../../../shared/source-control/hosted-review/hosted-review-contracts'
 import type { PRInfo } from '../../../../shared/github/pull-request-types'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type { Repo } from '../../../../shared/repo-types'
@@ -23,29 +23,33 @@ let prCache: Record<string, unknown> = {}
 let workspacePortScan: WorkspacePortScanResult | null = null
 let settings: Partial<GlobalSettings> | null = null
 
-vi.mock('@/store', () => ({
-  useAppStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      deleteStateByWorktreeId: {},
-      fetchHostedReviewForBranch,
-      fetchIssue,
-      fetchLinearIssue,
-      gitConflictOperationByWorktree: {},
-      hostedReviewCache,
-      issueCache,
-      linearIssueCache: {},
-      openModal,
-      prCache,
-      projectGroups: [],
-      remoteBranchConflictByWorktreeId: {},
-      settings,
-      sshConnectionStates: new Map(),
-      sshTargetLabels: new Map(),
-      updateWorktreeMeta,
-      workspacePortScan,
-      worktreeCardProperties
+vi.mock('@/store', () => {
+  const getState = () => ({
+    deleteStateByWorktreeId: {},
+    fetchHostedReviewForBranch,
+    fetchIssue,
+    fetchLinearIssue,
+    gitConflictOperationByWorktree: {},
+    hostedReviewCache,
+    issueCache,
+    linearIssueCache: {},
+    openModal,
+    prCache,
+    projectGroups: [],
+    remoteBranchConflictByWorktreeId: {},
+    settings,
+    sshConnectionStates: new Map(),
+    sshTargetLabels: new Map(),
+    updateWorktreeMeta,
+    workspacePortScan,
+    worktreeCardProperties
+  })
+  return {
+    useAppStore: Object.assign((selector: (state: unknown) => unknown) => selector(getState()), {
+      getState
     })
-}))
+  }
+})
 
 vi.mock('@/lib/worktree-activation', () => ({
   activateAndRevealWorktree: vi.fn()
@@ -76,7 +80,6 @@ vi.mock('./WorktreeCardAgents', () => ({
 
 vi.mock('./WorktreeContextMenu', () => ({
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
-  CLOSE_ALL_CONTEXT_MENUS_EVENT: 'orca:test-close-context-menus',
   WORKTREE_NATIVE_CONTEXT_MENU_ATTR: 'data-worktree-native-context-menu',
   WORKTREE_CONTEXT_MENU_SCOPE_ATTR: 'data-orca-context-menu-scope'
 }))

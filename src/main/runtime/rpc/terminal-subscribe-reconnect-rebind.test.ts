@@ -1,3 +1,4 @@
+import './unused-default-rpc-methods.test-fixture'
 import { describe, expect, it, vi } from 'vitest'
 import type { RuntimeTerminalWait } from '../../../shared/runtime-types'
 import type { OrcaRuntimeService } from '../orca-runtime'
@@ -7,7 +8,7 @@ import { TERMINAL_METHODS } from './methods/terminal'
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame
-} from '../../../shared/terminal-stream-protocol'
+} from '../../../shared/terminal/stream/terminal-stream-protocol'
 import { createSubscriptionRegistryDouble } from './subscription-registry-test-double'
 
 const makeRequest = (params: unknown): RpcRequest => ({

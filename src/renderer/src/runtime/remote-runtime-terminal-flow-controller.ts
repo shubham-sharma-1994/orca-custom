@@ -2,11 +2,11 @@ import {
   TerminalStreamOpcode,
   encodeTerminalStreamJson,
   encodeTerminalStreamText
-} from '../../../shared/terminal-stream-protocol'
+} from '../../../shared/terminal/stream/terminal-stream-protocol'
 import {
   TERMINAL_MULTIPLEX_ACK_BATCH_BYTES,
   TERMINAL_MULTIPLEX_ACK_FLUSH_MS
-} from '../../../shared/terminal-multiplex-flow-control'
+} from '../../../shared/terminal/stream/terminal-multiplex-flow-control'
 import { RemoteRuntimeTerminalSnapshotController } from './remote-runtime-terminal-snapshot-controller'
 import { clearAckFlushTimer } from './remote-runtime-terminal-snapshot-state'
 import type { RemoteRuntimeMultiplexedTerminalState } from './remote-runtime-terminal-multiplexer-types'
@@ -40,11 +40,16 @@ export abstract class RemoteRuntimeTerminalFlowController extends RemoteRuntimeT
     return this.streams.get(stream.streamId) === stream
   }
 
-  protected sendInput(stream: RemoteRuntimeMultiplexedTerminalState, text: string): boolean {
+  protected sendInput(
+    stream: RemoteRuntimeMultiplexedTerminalState,
+    text: string,
+    inputSeq?: number
+  ): boolean {
     const sent = this.sendFrame(
       stream.streamId,
       TerminalStreamOpcode.Input,
-      encodeTerminalStreamText(text)
+      encodeTerminalStreamText(text),
+      stream.supportsInputAck ? inputSeq : undefined
     )
     if (sent && !stream.outputPaused) {
       stream.watchdog.recordCommandInput(text)
@@ -56,7 +61,7 @@ export abstract class RemoteRuntimeTerminalFlowController extends RemoteRuntimeT
     stream: RemoteRuntimeMultiplexedTerminalState,
     paused: boolean
   ): boolean {
-    if (!stream.supportsOutputPause || this.streams.get(stream.streamId) !== stream) {
+    if (!stream.supportsOutputPause || !this.isRegisteredStream(stream)) {
       return false
     }
     if (stream.outputPaused === paused) {

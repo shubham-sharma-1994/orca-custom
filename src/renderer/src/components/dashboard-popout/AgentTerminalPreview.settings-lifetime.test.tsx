@@ -4,9 +4,9 @@ import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ITerminalOptions } from '@xterm/xterm'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
-import type { TerminalPreviewConnectResult } from '../../../../shared/terminal-preview'
+import type { TerminalPreviewConnectResult } from '../../../../shared/terminal/replay/terminal-preview'
 import { createGlobalSettingsFixture } from '../../../../shared/global-settings-test-fixture'
-import { makeCustomTerminalThemeSelection } from '../../../../shared/terminal-custom-themes'
+import { makeCustomTerminalThemeSelection } from '../../../../shared/terminal-themes/terminal-custom-themes'
 import { useAppStore } from '@/store'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 
@@ -53,7 +53,7 @@ vi.mock('./preview-grid-claim', () => ({
   createPreviewGridClaim: () => ({ schedule: vi.fn(), dispose: vi.fn() })
 }))
 vi.mock('./preview-terminal-box-fit', () => ({
-  createPreviewBoxFit: () => ({ schedule: vi.fn() })
+  createPreviewBoxFit: () => ({ schedule: vi.fn(), dispose: vi.fn() })
 }))
 vi.mock('./preview-terminal-ligatures', () => ({ syncPreviewTerminalLigatures: vi.fn() }))
 vi.mock('./preview-terminal-compatibility', () => ({

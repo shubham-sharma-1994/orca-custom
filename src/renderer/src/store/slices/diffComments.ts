@@ -1,32 +1,49 @@
+import { toast } from 'sonner'
+import { translate } from '@/i18n/i18n'
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type { DiffComment } from '../../../../shared/diff-comment-types'
-import { findWorktreeById } from './worktree-helpers'
 import { createBrowserUuid } from '@/lib/browser-uuid'
-import { findFolderWorkspaceOwner } from '@/lib/folder-workspace-runtime-owner'
-import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import { isMarkdownComment } from '@/lib/diff-comment-compat'
 import {
   enqueueDiffCommentPersist,
   mutateDiffComments,
   normalizeDiffComment
 } from './diff-comment-persistence'
+import { selectWorktreeDiffCommentsOrEmpty } from '../worktree-diff-comments-selector'
+import { readOwnedDiffComments, type DiffCommentOwner } from '../diff-comment-owner'
 
 export type DiffCommentsSlice = {
   getDiffComments: (worktreeId: string | null | undefined) => DiffComment[]
-  addDiffComment: (input: Omit<DiffComment, 'id' | 'createdAt'>) => Promise<DiffComment | null>
-  updateDiffComment: (worktreeId: string, commentId: string, body: string) => Promise<boolean>
+  addDiffComment: (
+    owner: DiffCommentOwner,
+    input: Omit<DiffComment, 'id' | 'createdAt'>
+  ) => Promise<DiffComment | null>
+  updateDiffComment: (owner: DiffCommentOwner, commentId: string, body: string) => Promise<boolean>
   clearDeliveredDiffComments: (
-    worktreeId: string,
+    owner: DiffCommentOwner,
     comments: readonly DiffCommentDeliverySnapshot[]
   ) => Promise<boolean>
   markDiffCommentsSent: (
-    worktreeId: string,
+    owner: DiffCommentOwner,
     commentIds: readonly string[],
     sentAt?: number
   ) => Promise<boolean>
-  deleteDiffComment: (worktreeId: string, commentId: string) => Promise<void>
-  clearDiffComments: (worktreeId: string) => Promise<boolean>
-  clearDiffCommentsForFile: (worktreeId: string, filePath: string) => Promise<boolean>
+  deleteDiffComment: (owner: DiffCommentOwner, commentId: string) => Promise<void>
+  clearDiffComments: (
+    owner: DiffCommentOwner,
+    options?: DiffCommentsClearOptions
+  ) => Promise<boolean>
+  clearDiffCommentsForFile: (
+    owner: DiffCommentOwner,
+    filePath: string,
+    options?: DiffCommentsClearOptions
+  ) => Promise<boolean>
+}
+
+export type DiffCommentsClearOptions = {
+  // Why: markdown notes hidden by the Markdown Review Notes setting must survive a clear the user can't see them in.
+  keepMarkdownNotes?: boolean
 }
 
 export type DiffCommentDeliverySnapshot = Pick<
@@ -53,9 +70,6 @@ function deliverySnapshotMatches(
   )
 }
 
-// Why: a frozen shared sentinel avoids selector re-renders and mutation.
-const EMPTY_COMMENTS: readonly DiffComment[] = Object.freeze([])
-
 // Why: best-effort telemetry runs only after the note is on disk, so a throw here must not report a failed save.
 function recordReviewNoteInteraction(get: () => AppState): void {
   try {
@@ -65,34 +79,36 @@ function recordReviewNoteInteraction(get: () => AppState): void {
   }
 }
 
+// Why: a copy gone since the user acted fails once, never on another copy. Add and clear callers already report their failures.
+function reportLostDiffCommentOwner(action: 'save' | 'clear'): void {
+  console.error('Review notes were not changed: the workspace copy they belong to is gone.')
+  toast.error(
+    action === 'save'
+      ? translate('auto.components.editor.diffCommentSaveFailed', 'Failed to save comment')
+      : translate(
+          'auto.components.right.sidebar.SourceControl.eae7a1da5f',
+          'Failed to clear notes.'
+        )
+  )
+}
+
 export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffCommentsSlice> = (
   set,
   get
 ) => ({
-  getDiffComments: (worktreeId) => {
-    // Why: return the stable sentinel for a missing worktree so optional-worktree callers don't allocate a fresh [] and trigger re-renders.
-    if (!worktreeId) {
-      return EMPTY_COMMENTS as DiffComment[]
-    }
-    const scope = parseWorkspaceKey(worktreeId)
-    const worktree =
-      scope?.type === 'folder'
-        ? findFolderWorkspaceOwner(get(), scope.folderWorkspaceId)
-        : findWorktreeById(get().worktreesByRepo, worktreeId)
-    if (!worktree?.diffComments) {
-      // Why: cast the frozen sentinel to the mutable return type; runtime freeze makes accidental mutation throw.
-      return EMPTY_COMMENTS as DiffComment[]
-    }
-    return worktree.diffComments
-  },
+  // Why the shared selector: rendered surfaces and actions must read the same twin's notes.
+  getDiffComments: (worktreeId) => selectWorktreeDiffCommentsOrEmpty(get(), worktreeId),
 
-  addDiffComment: async (input) => {
+  addDiffComment: async (owner, input) => {
+    if (!readOwnedDiffComments(get(), owner) || owner.worktreeId !== input.worktreeId) {
+      return null
+    }
     const comment: DiffComment = normalizeDiffComment({
       ...input,
       id: generateId(),
       createdAt: Date.now()
     })
-    const result = mutateDiffComments(set, input.worktreeId, (existing) => [...existing, comment])
+    const result = mutateDiffComments(set, owner, (existing) => [...existing, comment])
     if (!result) {
       return null
     }
@@ -107,15 +123,20 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     return comment
   },
 
-  updateDiffComment: async (worktreeId, commentId, body) => {
+  updateDiffComment: async (owner, commentId, body) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      reportLostDiffCommentOwner('save')
+      return false
+    }
+    const worktreeId = owner.worktreeId
     // Why: reject an empty edit so we never save a note that renders as a blank card; false means "not committed", keep the editor open.
     const trimmed = body.trim()
     if (!trimmed) {
       return false
     }
 
-    // Why: distinguish "comment missing" (false; keep draft, likely edit-while-deleted) from "body unchanged" (true; close editor) before mutating.
-    const existing = get().getDiffComments(worktreeId)
+    // Missing notes return false to keep draft; unchanged body returns true to close editor without mutation.
+    const existing = readOwnedDiffComments(get(), owner) ?? []
     const existingIdx = existing.findIndex((c) => c.id === commentId)
     if (existingIdx === -1) {
       return false
@@ -124,7 +145,7 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
       return true
     }
 
-    const result = mutateDiffComments(set, worktreeId, (current) => {
+    const result = mutateDiffComments(set, owner, (current) => {
       const idx = current.findIndex((c) => c.id === commentId)
       if (idx === -1) {
         return null
@@ -150,12 +171,17 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     }
   },
 
-  clearDeliveredDiffComments: async (worktreeId, comments) => {
+  clearDeliveredDiffComments: async (owner, comments) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      reportLostDiffCommentOwner('clear')
+      return false
+    }
+    const worktreeId = owner.worktreeId
     if (comments.length === 0) {
       return true
     }
     const snapshotsById = new Map(comments.map((comment) => [comment.id, comment]))
-    const result = mutateDiffComments(set, worktreeId, (existing) => {
+    const result = mutateDiffComments(set, owner, (existing) => {
       const next = existing.filter((comment) => {
         const snapshot = snapshotsById.get(comment.id)
         // Why: delivery is async; a note edited after its snapshot was sent is a fresh pending note that must stay visible.
@@ -176,12 +202,16 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     return true
   },
 
-  markDiffCommentsSent: async (worktreeId, commentIds, sentAt = Date.now()) => {
+  markDiffCommentsSent: async (owner, commentIds, sentAt = Date.now()) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      return false
+    }
+    const worktreeId = owner.worktreeId
     if (commentIds.length === 0) {
       return true
     }
     const ids = new Set(commentIds)
-    const result = mutateDiffComments(set, worktreeId, (existing) => {
+    const result = mutateDiffComments(set, owner, (existing) => {
       let changed = false
       const next = existing.map((comment) => {
         if (!ids.has(comment.id) || comment.sentAt === sentAt) {
@@ -205,8 +235,13 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     return true
   },
 
-  deleteDiffComment: async (worktreeId, commentId) => {
-    const result = mutateDiffComments(set, worktreeId, (existing) => {
+  deleteDiffComment: async (owner, commentId) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      reportLostDiffCommentOwner('clear')
+      return
+    }
+    const worktreeId = owner.worktreeId
+    const result = mutateDiffComments(set, owner, (existing) => {
       const next = existing.filter((c) => c.id !== commentId)
       return next.length === existing.length ? null : next
     })
@@ -221,10 +256,15 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     }
   },
 
-  clearDiffComments: async (worktreeId) => {
-    const result = mutateDiffComments(set, worktreeId, (existing) =>
-      existing.length === 0 ? null : []
-    )
+  clearDiffComments: async (owner, options) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      return false
+    }
+    const worktreeId = owner.worktreeId
+    const result = mutateDiffComments(set, owner, (existing) => {
+      const next = options?.keepMarkdownNotes ? existing.filter(isMarkdownComment) : []
+      return next.length === existing.length ? null : next
+    })
     if (!result) {
       return true
     }
@@ -237,9 +277,16 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     }
   },
 
-  clearDiffCommentsForFile: async (worktreeId, filePath) => {
-    const result = mutateDiffComments(set, worktreeId, (existing) => {
-      const next = existing.filter((c) => c.filePath !== filePath)
+  clearDiffCommentsForFile: async (owner, filePath, options) => {
+    if (!readOwnedDiffComments(get(), owner)) {
+      return false
+    }
+    const worktreeId = owner.worktreeId
+    const result = mutateDiffComments(set, owner, (existing) => {
+      const next = existing.filter(
+        (c) =>
+          c.filePath !== filePath || (options?.keepMarkdownNotes === true && isMarkdownComment(c))
+      )
       return next.length === existing.length ? null : next
     })
     if (!result) {

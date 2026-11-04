@@ -3,7 +3,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectGroup } from '../../../../shared/project-group-types'
-import { FOLDER_WORKSPACE_PATH_STATUS_TTL_MS } from '../../../../shared/folder-workspace-path-status'
+import { FOLDER_WORKSPACE_PATH_STATUS_TTL_MS } from '../../../../shared/folder-workspaces/folder-workspace-path-status'
 import type { FolderWorkspacePathStatusCacheEntry } from '@/store/repos/repo-state'
 import { useAppStore } from '@/store'
 import { getFolderWorkspaceStatusRequestSnapshot } from '@/store/folder-workspaces/folder-path-status'
@@ -176,7 +176,9 @@ describe('folder composer cache expiry requests', () => {
   )
 
   it('forces the initial check even when a matching fresh result is already cached', async () => {
-    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request)
+    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request, {
+      runtimeEnvironmentId: null
+    })
     expect(snapshot).not.toBeNull()
     useAppStore.setState({
       folderWorkspacePathStatuses: {
@@ -226,7 +228,9 @@ describe('folder composer cache expiry requests', () => {
   })
 
   it('keeps a real pending check pending when fresh cache is removed after unrelated expiry', async () => {
-    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request)
+    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request, {
+      runtimeEnvironmentId: null
+    })
     expect(snapshot).not.toBeNull()
     useAppStore.setState((state) => ({
       folderWorkspacePathStatuses: {
@@ -251,7 +255,12 @@ describe('folder composer cache expiry requests', () => {
 
   it('uses the selected runtime cache entry instead of a same-group local entry', async () => {
     const fetchStatus = vi.fn().mockResolvedValue(null)
-    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request)
+    useAppStore.setState({
+      projectGroups: [group, { ...group, executionHostId: 'runtime:env-1' }]
+    })
+    const snapshot = getFolderWorkspaceStatusRequestSnapshot(useAppStore.getState(), request, {
+      runtimeEnvironmentId: 'env-1'
+    })
     expect(snapshot).not.toBeNull()
     const makeEntry = (checkedAt: number): FolderWorkspacePathStatusCacheEntry => ({
       checkedAt,

@@ -4,19 +4,22 @@ import type { IDisposable } from '@xterm/xterm'
 import { useAppStore } from '../../store'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
 import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
-import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
+import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal/protocol/input-modes/terminal-kitty-keyboard-mode-tracker'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
-import type { PtyTransport } from './pty-transport'
-import type { SearchState } from './keyboard-handlers'
+import type { PtyTransport } from './pty-transport-types'
+import type { SearchState } from './terminal-keyboard-shortcut-matching'
 import type { CloseTerminalDialogCopyKind } from './CloseTerminalDialog'
-import type { TerminalLinkActionRequest } from './terminal-link-action-request'
-import { closeTerminalLinkActionRequest } from './terminal-link-action-request'
+
+import {
+  type TerminalLinkActionRequest,
+  closeTerminalLinkActionRequest
+} from './terminal-link-action-request'
 import type { PreparedAgentSessionFork } from './terminal-agent-session-fork'
 import type { AgentSessionContinuationRequest } from '@/lib/agent-session-continuation'
 import { createTerminalQuickCommandDraft } from '@/components/terminal-quick-commands/TerminalQuickCommandDialog'
 import { useDaemonActions } from '@/components/shared/useDaemonActions'
 import { useMobileOverlayTicks } from './use-mobile-overlay-ticks'
-import type { TerminalPaneHandle, TerminalPaneProps } from './terminal-pane-types'
+import type { TerminalPaneProps } from './terminal-pane-types'
 import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
 import type { VisiblePtyRecoveryState } from './terminal-remote-runtime-recovery-ui-state'
 import type { PaneProcessExit } from './pty-connection-types'
@@ -24,10 +27,7 @@ import type { PaneCwdMap } from './resolve-split-cwd'
 import type { TerminalErrorsByPaneId } from './terminal-error-accumulation'
 import { selectTerminalPaneHostState } from './terminal-pane-host-state'
 
-export function useTerminalPaneFoundation(
-  props: TerminalPaneProps,
-  ref: React.ForwardedRef<TerminalPaneHandle>
-) {
+export function useTerminalPaneFoundation(props: TerminalPaneProps) {
   const {
     tabId,
     worktreeId,
@@ -148,7 +148,9 @@ export function useTerminalPaneFoundation(
   const [ptyRecoveryStatesByPaneId, setPtyRecoveryStatesByPaneId] = useState<
     Record<number, VisiblePtyRecoveryState>
   >({})
-  const [sessionStateSaveFailureOpen, setSessionStateSaveFailureOpen] = useState(false)
+  const [sessionStateSaveFailureMessage, setSessionStateSaveFailureMessage] = useState<
+    string | null
+  >(null)
   const daemonActions = useDaemonActions()
   const { refreshMobileOverlays } = useMobileOverlayTicks({
     managerRef,
@@ -157,7 +159,6 @@ export function useTerminalPaneFoundation(
 
   return {
     ...props,
-    ref,
     tabId,
     worktreeId,
     cwd,
@@ -235,8 +236,8 @@ export function useTerminalPaneFoundation(
     setTerminalError,
     ptyRecoveryStatesByPaneId,
     setPtyRecoveryStatesByPaneId,
-    sessionStateSaveFailureOpen,
-    setSessionStateSaveFailureOpen,
+    sessionStateSaveFailureMessage,
+    setSessionStateSaveFailureMessage,
     daemonActions,
     refreshMobileOverlays
   }

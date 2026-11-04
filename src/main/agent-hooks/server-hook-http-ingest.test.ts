@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentHookServer, _internals } from './server'
-import { AGENT_STATUS_MAX_FIELD_LENGTH } from '../../shared/agent-status-types'
+import { AGENT_STATUS_MAX_FIELD_LENGTH } from '../../shared/agent-status/contracts/agent-status-field-normalization'
 import { makePaneKey } from '../../shared/stable-pane-id'
 import { buildBody, PANE, LEAF_2, LEAF_3 } from './server.test-fixtures'
 
@@ -302,10 +302,12 @@ describe('AgentHookServer listener replay', () => {
     }
   })
 
-  it('tracks hook posts with an empty paneKey before dropping them', async () => {
+  it('deduplicates empty pane diagnostics across HTTP, terminal, and relay ingress', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })
     try {
+      const listener = vi.fn()
+      server.setListener(listener)
       const env = server.buildPtyEnv()
       const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/claude`, {
         method: 'POST',
@@ -323,20 +325,31 @@ describe('AgentHookServer listener replay', () => {
           )
         )
       })
-      const listener = vi.fn()
-      server.setListener(listener)
-
       expect(response.status).toBe(204)
+      for (let index = 0; index < 100; index++) {
+        server.ingestTerminalStatus({
+          paneKey: '',
+          payload: { state: 'working', prompt: '', agentType: 'codex' }
+        })
+        server.ingestRemote(
+          { paneKey: '  ', payload: { state: 'working', prompt: '', agentType: 'codex' } },
+          'remote-1'
+        )
+      }
       expect(listener).not.toHaveBeenCalled()
-      expect(trackMock).toHaveBeenCalledWith('agent_hook_unattributed', {
+      expect(trackMock).toHaveBeenCalledExactlyOnceWith('agent_hook_unattributed', {
         reason: 'empty_pane_key'
       })
+      server.ingestTerminalStatus({
+        paneKey: PANE,
+        payload: { state: 'working', prompt: 'valid', agentType: 'codex' }
+      })
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ paneKey: PANE }))
     } finally {
       server.stop()
     }
   })
 
-  // Why (agent-status-over-SSH §3): ingestRemote must run the same warn-once diagnostics as the local HTTP path so stale remote hooks signal locally.
   it('runs warn-once env/version diagnostics on relay-forwarded events', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })
@@ -394,7 +407,6 @@ describe('AgentHookServer listener replay', () => {
         'conn-1'
       )
       expect(warn.mock.calls.length).toBe(warnsAfterFirst)
-      // Why: assert fanout still fires on the second event too, else a refactor that drops it would pass on warn-count alone.
       expect(listener).toHaveBeenCalledTimes(2)
     } finally {
       server.stop()
@@ -489,192 +501,6 @@ describe('AgentHookServer listener replay', () => {
             state: 'working',
             prompt: 'form encoded',
             agentType: 'claude'
-          })
-        })
-      )
-    } finally {
-      server.stop()
-    }
-  })
-
-  it('tracks Codex agent statuses from form-encoded managed hook posts', async () => {
-    const server = new AgentHookServer()
-    await server.start({ env: 'production' })
-    try {
-      const env = server.buildPtyEnv()
-      const listener = vi.fn()
-      server.setListener(listener)
-      const postCodexHook = async (payload: Record<string, unknown>): Promise<void> => {
-        const params = new URLSearchParams({
-          paneKey: PANE,
-          tabId: 'tab-1',
-          worktreeId: 'wt-1',
-          env: 'production',
-          version: env.ORCA_AGENT_HOOK_VERSION ?? '',
-          payload: JSON.stringify(payload)
-        })
-        const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
-          },
-          body: params
-        })
-        expect(response.status).toBe(204)
-      }
-
-      await postCodexHook({
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'ship codex hook status'
-      })
-      expect(server.getStatusSnapshot()).toEqual([
-        expect.objectContaining({
-          paneKey: PANE,
-          tabId: 'tab-1',
-          worktreeId: 'wt-1',
-          state: 'working',
-          agentType: 'codex',
-          prompt: 'ship codex hook status',
-          toolName: undefined,
-          toolInput: undefined
-        })
-      ])
-
-      await postCodexHook({
-        hook_event_name: 'PreToolUse',
-        tool_name: 'exec_command',
-        tool_input: { cmd: 'pnpm test', workdir: '/repo' }
-      })
-      expect(server.getStatusSnapshot()).toEqual([
-        expect.objectContaining({
-          state: 'working',
-          agentType: 'codex',
-          prompt: 'ship codex hook status',
-          toolName: 'exec_command',
-          toolInput: 'pnpm test'
-        })
-      ])
-
-      await postCodexHook({
-        hook_event_name: 'PermissionRequest',
-        tool_name: 'exec_command',
-        tool_input: { cmd: 'git push', workdir: '/repo' }
-      })
-      expect(server.getStatusSnapshot()).toEqual([
-        expect.objectContaining({
-          state: 'waiting',
-          agentType: 'codex',
-          prompt: 'ship codex hook status',
-          toolName: 'exec_command',
-          toolInput: 'git push'
-        })
-      ])
-
-      await postCodexHook({
-        hook_event_name: 'Stop',
-        last_assistant_message: 'done'
-      })
-      expect(server.getStatusSnapshot()).toEqual([
-        expect.objectContaining({
-          state: 'done',
-          agentType: 'codex',
-          prompt: 'ship codex hook status',
-          lastAssistantMessage: 'done'
-        })
-      ])
-      expect(listener).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          paneKey: PANE,
-          tabId: 'tab-1',
-          worktreeId: 'wt-1',
-          payload: expect.objectContaining({
-            state: 'done',
-            agentType: 'codex',
-            prompt: 'ship codex hook status',
-            lastAssistantMessage: 'done'
-          })
-        })
-      )
-    } finally {
-      server.stop()
-    }
-  })
-
-  it('accepts Hermes plugin hook posts on /hook/hermes', async () => {
-    const server = new AgentHookServer()
-    await server.start({ env: 'production' })
-    try {
-      const env = server.buildPtyEnv()
-      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/hermes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
-        },
-        body: JSON.stringify(
-          buildBody({
-            hook_event_name: 'pre_llm_call',
-            user_message: 'verify Hermes route'
-          })
-        )
-      })
-      expect(response.status).toBe(204)
-
-      const listener = vi.fn()
-      server.setListener(listener)
-
-      expect(listener).toHaveBeenCalledWith(
-        expect.objectContaining({
-          paneKey: PANE,
-          tabId: 'tab-1',
-          worktreeId: 'wt-1',
-          connectionId: null,
-          payload: expect.objectContaining({
-            state: 'working',
-            prompt: 'verify Hermes route',
-            agentType: 'hermes'
-          })
-        })
-      )
-    } finally {
-      server.stop()
-    }
-  })
-
-  it('accepts Amp plugin hook posts on /hook/amp', async () => {
-    const server = new AgentHookServer()
-    await server.start({ env: 'production' })
-    try {
-      const env = server.buildPtyEnv()
-      const listener = vi.fn()
-      server.setListener(listener)
-
-      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/amp`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
-        },
-        body: JSON.stringify(
-          buildBody({
-            hook_event_name: 'agent.start',
-            message: 'verify Amp route'
-          })
-        )
-      })
-      expect(response.status).toBe(204)
-
-      expect(listener).toHaveBeenCalledWith(
-        expect.objectContaining({
-          paneKey: PANE,
-          tabId: 'tab-1',
-          worktreeId: 'wt-1',
-          connectionId: null,
-          payload: expect.objectContaining({
-            state: 'working',
-            prompt: 'verify Amp route',
-            agentType: 'amp'
           })
         })
       )

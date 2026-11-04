@@ -1,16 +1,22 @@
 import React from 'react'
+import { getWorkspaceAttachments } from '../../../../shared/workspace-attachments/workspace-attachments'
 
+import { getWorktreeCardFrameGeometry } from './worktree-card-frame-geometry'
+import { hasWorktreeCardDetails } from './WorktreeCardMeta'
 import {
-  getFlushWorktreeCardPaddingLeft,
-  getNewCardStyleParentContentMarginLeft
-} from './worktree-list/rows/indentation'
-import {
-  hasWorktreeCardDetails,
-  WorktreeCardDetailsHover,
-  WorktreeCardMetaBadges
-} from './WorktreeCardMeta'
-import { WorktreeCardPortsDetails, WorktreeCardPortsTrigger } from './WorktreeCardPorts'
+  renderWorktreeCardIndicators,
+  WorktreeCardMetaDetailsHover
+} from './worktree-card-details-items'
 import type { WorktreeCardController } from './use-worktree-card-controller'
+
+function getVisibleContextLabel(
+  projectLabel: string | undefined,
+  hostLabel: string | undefined,
+  showHost: boolean
+): string | undefined {
+  const labels = [projectLabel, showHost ? hostLabel : undefined].filter(Boolean)
+  return labels.length > 0 ? labels.join(' · ') : undefined
+}
 
 export function buildWorktreeCardPresentation(card: WorktreeCardController) {
   const {
@@ -19,6 +25,7 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     inPinnedSection,
     hideRepoBadge,
     hostContextLabel,
+    showProjectName,
     affiliateListMode,
     flushSurface,
     contentIndent,
@@ -32,6 +39,7 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     showIdentityInNewCard,
     conflictOperation,
     cardProps,
+    cardDetails,
     cacheStartedAt,
     hasDetails,
     hasPorts,
@@ -41,11 +49,6 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     remoteBranchConflict,
     visibleCardTitle,
     workspacePorts,
-    metaIssue,
-    metaLinearIssue,
-    metaJiraIssue,
-    metaReview,
-    metaComment,
     metaAutomationProvenance,
     metaCliProvenance,
     hoverIssue,
@@ -53,32 +56,22 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     hoverJiraIssue,
     hoverReview,
     hoverComment,
-    linearIssue,
-    handleEditIssue,
-    handleEditComment,
-    handleOpenGitHubIssueInOrca,
-    handleOpenIssueInBrowser,
-    handleOpenLinearIssueInOrca,
-    handleOpenReviewInOrca,
-    handleOpenReviewInBrowser,
-    handleOpenAutomation,
-    handleOpenAutomationRun,
-    canUnlinkReview,
-    handleUnlinkReview,
-    detailsHoverControl,
     showDeleteQuickAction
   } = card
 
-  // Why: pinned trees mix repos, so the repo icon shows regardless of groupBy's hideRepoBadge.
-  const showPinnedRepoIcon = inPinnedSection && !!repo
-  // Why: new card style retired the Compact/Detailed switch; repo identity uses the compact chip, not a lower pill.
-  const showRepoIdentityInTitle = newCardStyle || compactCards
+  // Why: pinned trees mix repos, so ordinary rows lead with the project chip; cross-repo children keep the regular project badge.
+  const showPinnedRepoIcon = inPinnedSection && !!repo && !showProjectName
   const showInlineRepoBadge =
-    showRepoIdentityInTitle && !!repo && !hideRepoBadge && !isFolder && !showPinnedRepoIcon
+    cardDetails.repoInTitle && !!repo && !hideRepoBadge && !isFolder && !showPinnedRepoIcon
   const showRepoBadgeInMetaRow =
-    !showRepoIdentityInTitle && !!repo && !hideRepoBadge && !showPinnedRepoIcon
-  const showHostContextBadge = !compactCards && !!hostContextLabel
-  const showDetachedHeadInMetaRow = !compactCards && !isFolder && detachedHeadDisplay !== null
+    !cardDetails.repoInTitle && !!repo && !hideRepoBadge && !showPinnedRepoIcon
+  const contextLabel = getVisibleContextLabel(
+    undefined,
+    hostContextLabel,
+    cardProps.includes('host')
+  )
+  const showHostContextBadge = !!contextLabel && (!compactCards || !!showProjectName)
+  const showDetachedHeadInMetaRow = cardDetails.metaRow && !isFolder && detachedHeadDisplay !== null
   const showBranch =
     !isFolder &&
     branch.length > 0 &&
@@ -106,11 +99,11 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     cacheStartedAt != null ||
     showMetaRowDetails
   )
-  const hasMetaRow = compactCards
-    ? hasMetadataBadge || cacheStartedAt != null
-    : hasDetailedMetaRowContent
+  // Why: without the identity meta row, a compact card keeps a row only for badges and the timer.
+  const hasMetaRow = cardDetails.metaRow
+    ? hasDetailedMetaRowContent
+    : hasMetadataBadge || cacheStartedAt != null
   const showHeaderActions = showTitleRowPrimary || showDeleteQuickAction
-  // Why: normalize the title once so title/branch de-dupe and identity-only hover eligibility stay in sync.
   const trimmedVisibleCardTitle = visibleCardTitle.trim()
   const showBranchIdentityHover = newCardStyle
     ? Boolean(identityDisplay) &&
@@ -128,129 +121,35 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
       : undefined
   const hasHoverIdentity = Boolean(hoverWorkspaceTitle || hoverBranchName)
   const hasHoverDetails =
-    newCardStyle &&
-    (hasWorktreeCardDetails({
-      issue: hoverIssue,
-      linearIssue: hoverLinearIssue,
-      jiraIssue: hoverJiraIssue,
-      review: hoverReview,
-      comment: hoverComment,
-      automationProvenance: metaAutomationProvenance,
-      cliProvenance: metaCliProvenance
-    }) ||
+    (newCardStyle || compactCards) &&
+    (getWorkspaceAttachments(worktree).length > 0 ||
+      hasWorktreeCardDetails({
+        issue: hoverIssue,
+        linearIssue: hoverLinearIssue,
+        jiraIssue: hoverJiraIssue,
+        review: hoverReview,
+        comment: hoverComment,
+        automationProvenance: metaAutomationProvenance,
+        cliProvenance: metaCliProvenance
+      }) ||
       workspacePorts.length > 0 ||
       hasHoverIdentity)
   // Why: the parent row owns metadata hover; don't stack the title's truncation tooltip on the details popover.
-  const titleWrapper = newCardStyle
-    ? hasHoverDetails
-      ? (title: React.ReactElement): React.ReactElement => title
-      : undefined
-    : compactCards && (showBranchIdentityHover || hasDetails || hasPorts)
-      ? (title: React.ReactElement): React.ReactElement => (
-          <WorktreeCardDetailsHover
-            issue={metaIssue}
-            linearIssue={metaLinearIssue}
-            jiraIssue={metaJiraIssue}
-            review={metaReview}
-            comment={metaComment}
-            automationProvenance={metaAutomationProvenance}
-            cliProvenance={metaCliProvenance}
-            branchName={showBranchIdentityHover ? branch : undefined}
-            workspaceTitle={worktree.displayName}
-            identityOrder="branch-first"
-            detailsAfter={hasPorts ? <WorktreeCardPortsDetails ports={workspacePorts} /> : null}
-            openDelay={100}
-            // Why: compact mode also renders the plug/badge hover root; sharing one open-state made hovering the
-            // plug force-open the wider title card and race it closed (#9304), so let this title hover own its state.
-            onEditIssue={affiliateListMode ? undefined : handleEditIssue}
-            onEditComment={affiliateListMode ? undefined : handleEditComment}
-            onOpenGitHubIssueInOrca={
-              metaIssue && 'url' in metaIssue && metaIssue.url
-                ? handleOpenGitHubIssueInOrca
-                : undefined
-            }
-            onOpenIssueInBrowser={
-              metaIssue && 'url' in metaIssue && metaIssue.url
-                ? handleOpenIssueInBrowser
-                : undefined
-            }
-            onOpenLinearIssueInOrca={linearIssue?.url ? handleOpenLinearIssueInOrca : undefined}
-            onOpenReviewInOrca={
-              metaReview?.url && metaReview.provider === 'github'
-                ? handleOpenReviewInOrca
-                : undefined
-            }
-            onOpenReviewInBrowser={metaReview?.url ? handleOpenReviewInBrowser : undefined}
-            onOpenAutomation={affiliateListMode ? undefined : handleOpenAutomation}
-            onOpenAutomationRun={affiliateListMode ? undefined : handleOpenAutomationRun}
-            // Why: compact mode hides the metadata badge row, so title hover carries the review affordance.
-            onUnlinkReview={!affiliateListMode && canUnlinkReview ? handleUnlinkReview : undefined}
-          >
-            {title}
-          </WorktreeCardDetailsHover>
-        )
-      : undefined
+  const titleWrapper = hasHoverDetails
+    ? (title: React.ReactElement): React.ReactElement => title
+    : undefined
   // Why: sidebar rows need a small surface inset while content stays aligned with the pre-inset layout.
-  const applyNewCardStyleStatusLaneOffset = newCardStyle && showCombinedStatusSlot
-  const cardPaddingLeft = flushSurface
-    ? getFlushWorktreeCardPaddingLeft(contentIndent, applyNewCardStyleStatusLaneOffset)
-    : contentIndent > 0
-      ? `calc(0.125rem + ${contentIndent}px)`
-      : null
-  const parentContentMarginLeft =
-    flushSurface && applyNewCardStyleStatusLaneOffset
-      ? getNewCardStyleParentContentMarginLeft(contentIndent)
-      : 0
-  const cardStyle = cardPaddingLeft ? { paddingLeft: cardPaddingLeft } : undefined
-  const detailsAndPortsContent =
-    hasDetails || hasPorts ? (
-      <div className="flex shrink-0 items-center gap-1">
-        {hasPorts && <WorktreeCardPortsTrigger ports={workspacePorts} />}
-        {hasDetails && (
-          <WorktreeCardMetaBadges
-            issue={metaIssue}
-            linearIssue={metaLinearIssue}
-            jiraIssue={metaJiraIssue}
-            review={newCardStyle ? null : metaReview}
-            comment={metaComment}
-            automationProvenance={metaAutomationProvenance}
-            cliProvenance={metaCliProvenance}
-            className="ml-0 pr-0"
-          />
-        )}
-      </div>
-    ) : null
+  const { cardStyle, parentContentMarginLeft } = getWorktreeCardFrameGeometry({
+    flushSurface,
+    contentIndent,
+    statusLane: newCardStyle && showCombinedStatusSlot
+  })
+  const detailsAndPortsContent = renderWorktreeCardIndicators(card)
   const detailsAndPorts =
-    detailsAndPortsContent && !newCardStyle ? (
-      <WorktreeCardDetailsHover
-        issue={metaIssue}
-        linearIssue={metaLinearIssue}
-        jiraIssue={metaJiraIssue}
-        review={metaReview}
-        comment={metaComment}
-        automationProvenance={metaAutomationProvenance}
-        cliProvenance={metaCliProvenance}
-        detailsAfter={hasPorts ? <WorktreeCardPortsDetails ports={workspacePorts} /> : null}
-        hoverControl={detailsHoverControl}
-        onEditIssue={affiliateListMode ? undefined : handleEditIssue}
-        onEditComment={affiliateListMode ? undefined : handleEditComment}
-        onOpenGitHubIssueInOrca={
-          metaIssue && 'url' in metaIssue && metaIssue.url ? handleOpenGitHubIssueInOrca : undefined
-        }
-        onOpenIssueInBrowser={
-          metaIssue && 'url' in metaIssue && metaIssue.url ? handleOpenIssueInBrowser : undefined
-        }
-        onOpenLinearIssueInOrca={linearIssue?.url ? handleOpenLinearIssueInOrca : undefined}
-        onOpenReviewInOrca={
-          metaReview?.url && metaReview.provider === 'github' ? handleOpenReviewInOrca : undefined
-        }
-        onOpenReviewInBrowser={metaReview?.url ? handleOpenReviewInBrowser : undefined}
-        onOpenAutomation={affiliateListMode ? undefined : handleOpenAutomation}
-        onOpenAutomationRun={affiliateListMode ? undefined : handleOpenAutomationRun}
-        onUnlinkReview={!affiliateListMode && canUnlinkReview ? handleUnlinkReview : undefined}
-      >
+    detailsAndPortsContent && !newCardStyle && !compactCards ? (
+      <WorktreeCardMetaDetailsHover card={card}>
         {detailsAndPortsContent}
-      </WorktreeCardDetailsHover>
+      </WorktreeCardMetaDetailsHover>
     ) : (
       detailsAndPortsContent
     )
@@ -266,6 +165,7 @@ export function buildWorktreeCardPresentation(card: WorktreeCardController) {
     showInlineRepoBadge,
     showRepoBadgeInMetaRow,
     showHostContextBadge,
+    contextLabel,
     showIdentityInNewCard,
     showDetachedHeadInMetaRow,
     showBranch,

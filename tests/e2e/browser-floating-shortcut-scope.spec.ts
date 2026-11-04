@@ -38,7 +38,11 @@ async function openFloatingBrowser(
       if (!store) {
         throw new Error('Store unavailable')
       }
-      store.setState({ settings: { ...store.getState().settings, floatingTerminalEnabled: true } })
+      const settings = store.getState().settings
+      if (!settings) {
+        throw new Error('Settings are not loaded')
+      }
+      store.setState({ settings: { ...settings, floatingTerminalEnabled: true } })
       const state = store.getState()
       const tab = state.createBrowserTab(worktreeId, initialUrl, {
         activate: true,
@@ -69,16 +73,20 @@ function findInput(page: Page, browserTabId: string) {
   return browserOverlay(page, browserTabId).getByPlaceholder('Find in page...')
 }
 
-function grabButton(page: Page, browserTabId: string) {
+function cancelGrabButton(page: Page, browserTabId: string) {
   return browserOverlay(page, browserTabId).getByRole('button', {
-    name: 'Grab page element',
+    name: 'Cancel',
     exact: true
   })
 }
 
 // Why: a non-editable chrome target, so reload and grab are not skipped as text-field keys.
 async function focusChrome(page: Page, browserTabId: string): Promise<void> {
-  const target = grabButton(page, browserTabId)
+  // Reload stays in the toolbar when narrow panes fold their element tools into the menu.
+  const target = browserOverlay(page, browserTabId).getByRole('button', {
+    name: 'Reload',
+    exact: true
+  })
   await expect(target).toBeEnabled()
   await target.focus()
   await expect(target).toBeFocused()
@@ -148,10 +156,10 @@ test.describe('floating browser shortcut scope', () => {
 
           await focusChrome(orcaPage, owner)
           await orcaPage.keyboard.press(`${shortcutModifier}+c`)
-          await expect(grabButton(orcaPage, owner)).toHaveAttribute('data-variant', 'default')
-          await expect(grabButton(orcaPage, other)).toHaveAttribute('data-variant', 'ghost')
-          await grabButton(orcaPage, owner).click()
-          await expect(grabButton(orcaPage, owner)).toHaveAttribute('data-variant', 'ghost')
+          await expect(cancelGrabButton(orcaPage, owner)).toBeVisible()
+          await expect(cancelGrabButton(orcaPage, other)).toBeHidden()
+          await cancelGrabButton(orcaPage, owner).click()
+          await expect(cancelGrabButton(orcaPage, owner)).toBeHidden()
         })
       }
 

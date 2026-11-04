@@ -1,4 +1,5 @@
 import React from 'react'
+import { getOverlayFocusOwners, overlayFocusContains } from '@/lib/overlay-focus-ownership'
 import {
   Dialog,
   DialogContent,
@@ -6,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { AgentsPane } from '@/components/settings/AgentsPane'
+import { AgentsPane } from '@/components/settings/agents/AgentsPane'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 import {
@@ -15,18 +16,23 @@ import {
 } from '@/lib/windows-terminal-capabilities'
 import { isWebClientLocation } from '@/lib/web-client-location'
 import { useWindowsTerminalCapabilityOwnerKey } from '@/hooks/useWindowsTerminalCapabilityOwnerKey'
+import { resolveSettingsHostScope } from '@/components/settings/host-scope/settings-host-scope'
 
 type AgentSettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>['onCloseAutoFocus']
 }
 
 export default function AgentSettingsDialog({
   open,
-  onOpenChange
+  onOpenChange,
+  onCloseAutoFocus
 }: AgentSettingsDialogProps): React.JSX.Element | null {
   const settings = useAppStore((s) => s.settings)
   const updateSettings = useAppStore((s) => s.updateSettings)
+  const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
+  const runtimeEnvironmentCatalogHydrated = useAppStore((s) => s.runtimeEnvironmentCatalogHydrated)
   const isWindowsRenderer =
     typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows')
   const isWebClient = isWebClientLocation()
@@ -49,14 +55,18 @@ export default function AgentSettingsDialog({
   if (!settings) {
     return null
   }
+  // Why: no picker here; the pane names the default host it detects on.
+  const hostScope = resolveSettingsHostScope({
+    choice: null,
+    defaultEnvironmentId: settings.activeRuntimeEnvironmentId,
+    savedEnvironmentIds: runtimeEnvironments.map((environment) => environment.id),
+    catalogHydrated: runtimeEnvironmentCatalogHydrated
+  })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* Why: widen past the default sm:max-w-lg so the agent rows have room
-          for the name + pills + action cluster without wrapping, while a
-          bounded max-h plus overflow-y keeps the list scrollable when many
-          agents are detected. */}
-      <DialogContent className="sm:max-w-2xl">
+      {/* Allow name/pills/actions to fit; the agent list owns bounded height and scrolling. */}
+      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="text-sm">
             {translate('auto.components.agent.AgentSettingsDialog.fc0268e4ed', 'Agents')}
@@ -72,6 +82,7 @@ export default function AgentSettingsDialog({
           <AgentsPane
             settings={settings}
             updateSettings={updateSettings}
+            hostScope={hostScope}
             wslSupportedPlatform={wslSupportedPlatform}
             wslAvailable={localWindowsTerminalCapabilities.wslAvailable}
             wslDistros={localWindowsTerminalCapabilities.wslDistros}
@@ -81,4 +92,27 @@ export default function AgentSettingsDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+export function restoreAgentSettingsInvoker(event: Event, invoker: HTMLButtonElement | null): void {
+  if (event.defaultPrevented) {
+    return
+  }
+  event.preventDefault()
+  const active = document.activeElement
+  const dialog = event.target
+  if (
+    invoker?.isConnected &&
+    !invoker.disabled &&
+    !invoker.closest('[inert]') &&
+    (active === document.body ||
+      active === invoker ||
+      (dialog instanceof HTMLElement && active && overlayFocusContains(dialog, active))) &&
+    !getOverlayFocusOwners(invoker).some(
+      (owner) =>
+        owner !== dialog && !(dialog instanceof HTMLElement && overlayFocusContains(dialog, owner))
+    )
+  ) {
+    invoker.focus({ preventScroll: true })
+  }
 }

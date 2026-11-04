@@ -7,7 +7,7 @@ const { installForRuntimeHomeSerializedMock, realpathMock } = vi.hoisted(() => (
   realpathMock: vi.fn()
 }))
 
-vi.mock('../../../codex/hook-service', () => ({
+vi.mock('../../../codex/hooks/installation/hook-service', () => ({
   codexHookService: { installForRuntimeHomeSerialized: installForRuntimeHomeSerializedMock }
 }))
 vi.mock('node:fs/promises', () => ({ realpath: realpathMock }))
@@ -16,7 +16,7 @@ import { AGENT_HOOK_METHODS } from './agent-hooks'
 import {
   _internals as managedWslHomeRegistryInternals,
   recordManagedWslCodexHome
-} from '../../../codex/managed-wsl-codex-home-registry'
+} from '../../../codex/configuration/homes/managed-wsl-codex-home-registry'
 
 const LINUX_HOME = '/home/jin/.local/share/orca/codex-runtime-home/home'
 const RUNTIME_HOME =
@@ -33,11 +33,14 @@ function prepareMethod() {
 }
 
 function runtimeWithSettings(enabled = true, disabledTuiAgents: string[] = []): OrcaRuntimeService {
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the hook handler reads only requireStore/getSettings from this runtime fixture.
   return {
-    getClientSettings: vi.fn(() => ({
-      agentStatusHooksEnabled: enabled,
-      disabledTuiAgents
-    }))
+    requireStore: () => ({
+      getSettings: () => ({
+        agentStatusHooksEnabled: enabled,
+        disabledTuiAgents
+      })
+    })
   } as unknown as OrcaRuntimeService
 }
 

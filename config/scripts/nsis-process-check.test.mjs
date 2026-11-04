@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { runProcessSync } from '../../src/shared/child-process/run-process'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { runProcessSync } from '@orca/process-host'
 
 const hooks = readFileSync(new URL('../nsis/orca-installer-hooks.nsh', import.meta.url), 'utf8')
 const processCheck = readFileSync(
@@ -66,7 +66,15 @@ describe.runIf(process.platform === 'win32')(
       `[Console]::Out.WriteLine('${policyReceipt}');`
     ].join(' ')
 
-    function runProbe(arch, prefix = '') {
+    // Watchdog matches powershell-runner.mjs: Windows PowerShell 5.1 cold start under CI load exceeded the old 20s cap; this is no latency budget.
+    const PROBE_TIMEOUT_MS = 60_000
+    // Vitest's 30s default would otherwise cap the blocking spawn ahead of PROBE_TIMEOUT_MS.
+    const PROBE_TEST_TIMEOUT_MS = PROBE_TIMEOUT_MS + 15_000
+
+    const WARM_UP_TIMEOUT_MS = 150_000
+    const ARCHES = ['SysWOW64', 'System32']
+
+    function runProbe(arch, prefix = '', timeoutMs = PROBE_TIMEOUT_MS) {
       const { args, command } = readPowerShellProbe()
       if (!process.env.SystemRoot) {
         throw new Error('SystemRoot is required on Windows')
@@ -83,27 +91,45 @@ describe.runIf(process.platform === 'win32')(
           ORCA_BACKGROUND_LAUNCH: '1',
           PSExecutionPolicyPreference: 'Restricted'
         },
-        timeoutMs: 20_000
+        timeoutMs
       })
     }
 
-    it.each(['SysWOW64', 'System32'])('%s permits the real inline process query', (arch) => {
-      const result = runProbe(arch)
-      expect(result.code, JSON.stringify(result)).toBe(0)
-      expect(result.timedOut).toBe(false)
-      expect(result.stdout).toContain(policyReceipt)
-    })
+    // A fresh runner's first Get-CimInstance outlasted the watchdog; warm it once per build.
+    beforeAll(
+      () => {
+        for (const arch of ARCHES) {
+          runProbe(arch, '', WARM_UP_TIMEOUT_MS)
+        }
+      },
+      ARCHES.length * WARM_UP_TIMEOUT_MS + 15_000
+    )
 
-    it.each(['SysWOW64', 'System32'])('%s rejects a failed process query', (arch) => {
-      const result = runProbe(
-        arch,
-        'function Get-CimInstance { [CmdletBinding()] param([string]$ClassName); ' +
-          `[Console]::Out.WriteLine('${queryFailureReceipt}'); Write-Error 'CIM unavailable' }; `
-      )
-      expect(result.code, JSON.stringify(result)).toBe(1)
-      expect(result.timedOut).toBe(false)
-      expect(result.stdout).toContain(policyReceipt)
-      expect(result.stdout).toContain(queryFailureReceipt)
-    })
+    it.each(ARCHES)(
+      '%s permits the real inline process query',
+      { timeout: PROBE_TEST_TIMEOUT_MS },
+      (arch) => {
+        const result = runProbe(arch)
+        expect(result.code, JSON.stringify(result)).toBe(0)
+        expect(result.timedOut).toBe(false)
+        expect(result.stdout).toContain(policyReceipt)
+      }
+    )
+
+    it.each(ARCHES)(
+      '%s rejects a failed process query',
+      { timeout: PROBE_TEST_TIMEOUT_MS },
+      (arch) => {
+        const result = runProbe(
+          arch,
+          'function Get-CimInstance { [CmdletBinding()] param([string]$ClassName); ' +
+            `[Console]::Out.WriteLine('${queryFailureReceipt}'); Write-Error 'CIM unavailable' }; `
+        )
+        expect(result.code, JSON.stringify(result)).toBe(1)
+        expect(result.timedOut).toBe(false)
+        expect(result.stdout).toContain(policyReceipt)
+        expect(result.stdout).toContain(queryFailureReceipt)
+      }
+    )
   }
 )

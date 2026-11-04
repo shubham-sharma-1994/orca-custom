@@ -11,6 +11,8 @@ import { readGrokAuthSession } from './grok-auth'
 import { fetchCursorRateLimits } from './cursor-fetcher'
 import { readCursorAuthSession } from './cursor-auth'
 import { fetchOpenCodeGoUsage } from './opencode-go-usage-source-selection'
+import { fetchZcodeRateLimits } from './zcode-usage-fetcher'
+import { fetchAntigravityRateLimits } from './antigravity-usage-fetcher'
 import { hasMiniMaxSessionCookie } from '../minimax/minimax-cookie-store'
 
 export type Deferred<T> = {
@@ -80,10 +82,7 @@ export function unavailableProvider(
   }
 }
 
-// Why: beforeEach caches snapshot objects whose updatedAt is pinned at suite
-// start, so after 5 fake minutes every healthy provider looks stale and every
-// activation degrades to a full fetch. Backoff tests that reason about the
-// individual retry lane need healthy providers minted fresh at fetch time.
+// Mint timestamps at fetch time: suite-start snapshots become stale under fake timers and turn retry tests into full fetches.
 export function mockFreshBackgroundProviderFetches(): void {
   vi.mocked(fetchCodexRateLimits).mockImplementation(async () => okProvider('codex', 24))
   vi.mocked(fetchGeminiRateLimits).mockImplementation(async () => okProvider('gemini', 0))
@@ -92,9 +91,12 @@ export function mockFreshBackgroundProviderFetches(): void {
   vi.mocked(fetchMiniMaxRateLimits).mockImplementation(async () => okProvider('minimax', 0))
   vi.mocked(fetchGrokRateLimits).mockImplementation(async () => unavailableProvider('grok'))
   vi.mocked(fetchCursorRateLimits).mockImplementation(async () => unavailableProvider('cursor'))
+  vi.mocked(fetchZcodeRateLimits).mockImplementation(async () => unavailableProvider('zcode'))
+  vi.mocked(fetchAntigravityRateLimits).mockImplementation(async () =>
+    unavailableProvider('antigravity')
+  )
 }
 
-/** Shared `beforeEach` body: healthy stubs for every provider the service polls. */
 export function resetRateLimitProviderMocks(): void {
   vi.clearAllMocks()
   vi.mocked(fetchGeminiRateLimits).mockResolvedValue(okProvider('gemini', 0, Date.now()))
@@ -110,6 +112,8 @@ export function resetRateLimitProviderMocks(): void {
     status: 'unavailable'
   })
   vi.mocked(fetchCursorRateLimits).mockResolvedValue(unavailableProvider('cursor'))
+  vi.mocked(fetchZcodeRateLimits).mockResolvedValue(unavailableProvider('zcode'))
+  vi.mocked(fetchAntigravityRateLimits).mockResolvedValue(unavailableProvider('antigravity'))
   vi.mocked(hasMiniMaxSessionCookie).mockReturnValue(false)
   vi.mocked(readGrokAuthSession).mockReturnValue({ status: 'missing' })
   vi.mocked(readCursorAuthSession).mockResolvedValue({ status: 'missing' })

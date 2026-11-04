@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type {
   AgentSessionStatusEvent,
   AgentSessionStatusSummary
-} from '../../../shared/agent-session-wire'
+} from '../../../shared/agent-session/agent-session-wire'
 import { resetStructuredAgentSessionStatusFeedsForTests } from '@/runtime/structured-agent-session-status-feed'
 import {
   _resetNativeChatRestartOffer,
@@ -23,10 +23,6 @@ vi.mock('@/runtime/structured-agent-session-client', () => ({
   callStructuredAgentSession: mocks.rpc,
   subscribeStructuredAgentSessionStatus: mocks.subscribeStatus
 }))
-vi.mock('sonner', () => ({ toast: vi.fn() }))
-
-// After a restart action leaves a chat failed, the user's reply in that chat must retire the status
-// bar entry without the user reopening anything, and nothing may run while nothing failed.
 
 const failure = {
   sessionId: 'a',
@@ -68,7 +64,6 @@ function offerReads(): number {
     .length
 }
 
-/** Lists one failed chat, then answers every later read with `later`. */
 async function listFailure(later: { failed: unknown[] } = { failed: [] }): Promise<void> {
   mocks.rpc
     .mockResolvedValueOnce({ sessions: [], failed: [failure] })
@@ -89,13 +84,6 @@ afterEach(() => {
   _resetNativeChatRestartOffer()
   resetStructuredAgentSessionStatusFeedsForTests()
   vi.useRealTimers()
-})
-
-it('opens no status stream while nothing failed', async () => {
-  mocks.rpc.mockResolvedValue({ sessions: [], failed: [] })
-  await refreshNativeChatRestartOffer()
-  await vi.advanceTimersByTimeAsync(0)
-  expect(mocks.subscribeStatus).not.toHaveBeenCalled()
 })
 
 it('re-reads once when the user replies in a failed chat, then lets the stream go', async () => {
@@ -124,13 +112,11 @@ it('does not re-read for an agent streaming in a failed chat or for news older t
 
   hostEmit()({ type: 'status', session: summary('idle', 'Replayed note', later + 1) })
   await vi.advanceTimersByTimeAsync(500)
-  // Still failed, so the watch stays for the user's own reply.
   expect(offerReads()).toBe(2)
   expect(mocks.unsubscribe).not.toHaveBeenCalled()
 })
 
-// Host and renderer stamp time separately, and the host can answer a list just before a reply is
-// delivered here: a change to a chat already seen is news whatever its timestamp says.
+// Known chat changes are news despite older host timestamps because list and status delivery can race.
 it('re-reads for a known failed chat that changes even when its stamp predates the list', async () => {
   await listFailure()
   hostEmit()({ type: 'snapshot', sessions: [summary('idle', 'Fix it', 1)] })
@@ -160,26 +146,27 @@ it('never lets a re-read that was already in flight bring back a dismissed failu
   expect(getNativeChatRestartOffer().failed).toEqual([])
 })
 
-// A retry changes the chat it acts on; its own answer follows, so a read mid-action would only
-// flash a half-finished list.
 it('waits for a resume in flight instead of re-reading under it', async () => {
   await listFailure({ failed: [failure] })
   const acting = Promise.withResolvers<unknown>()
+  let failed: unknown[] = [failure]
   mocks.rpc.mockImplementation((_target: unknown, method: string) =>
     method === 'agentSession.restartContinue'
       ? acting.promise
-      : Promise.resolve({ sessions: [], failed: [failure] })
+      : Promise.resolve({ sessions: [], failed })
   )
   const retry = continueNativeChatRestartOffer(['a'])
   hostEmit()({ type: 'status', session: summary('working', 'Carry on please', Date.now() + 1) })
   await vi.advanceTimersByTimeAsync(500)
   expect(offerReads()).toBe(1)
 
+  failed = []
   acting.resolve({
     sessions: [],
     failed: [],
     continued: [{ sessionId: 'a', outcome: 'continued' }]
   })
   await retry
+  expect(offerReads()).toBe(1)
   expect(getNativeChatRestartOffer().failed).toEqual([])
 })

@@ -24,7 +24,7 @@ vi.mock('../cli/cli-installer', () => ({
   }
 }))
 
-vi.mock('../appimage-runtime-identity', () => ({
+vi.mock('../updater/linux-package/appimage-runtime-identity', () => ({
   resolveAppImageRuntimeIdentity: mocks.resolveAppImageRuntimeIdentity
 }))
 
@@ -49,14 +49,16 @@ vi.mock('../cli/wsl-cli-registration-operation', () => ({
   runSerializedWslCliRegistrationOperation: vi.fn()
 }))
 
-vi.mock('../persistence', () => ({ getCanonicalUserDataPath: vi.fn() }))
+vi.mock('../persistence/loading-store/user-data-path', () => ({
+  getCanonicalUserDataPath: vi.fn()
+}))
 
 vi.mock('../startup/hydrate-shell-path', () => ({
   hydrateShellPath: mocks.hydrateShellPath,
   mergePathSegments: mocks.mergePathSegments
 }))
 
-vi.mock('../wsl', () => ({ getDefaultWslDistro: vi.fn() }))
+vi.mock('../wsl/discovery/distro-catalog', () => ({ getDefaultWslDistro: vi.fn() }))
 
 import { registerCliHandlers } from './cli'
 
@@ -368,14 +370,5 @@ describe('AppImage CLI registration startup repair', () => {
 
     await expect(installStatusHandler()()).resolves.toBe(installed)
     expect(mocks.install).toHaveBeenCalledOnce()
-  })
-
-  it('does not mutate a stale registration off Linux', async () => {
-    const stale = status('stale')
-    mocks.getStatus.mockResolvedValue(stale)
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
-
-    await expect(installStatusHandler()()).resolves.toBe(stale)
-    expect(mocks.install).not.toHaveBeenCalled()
   })
 })

@@ -1,6 +1,9 @@
 import { createConnection, createServer, type Socket, type AddressInfo } from 'node:net'
 import type { Page } from '@stablyai/playwright-test'
-import { decodePairingOffer, encodePairingOffer } from '../../src/shared/pairing'
+import {
+  decodePairingOffer,
+  encodePairingOffer
+} from '../../src/shared/remote-runtime/pairing/pairing'
 import { expect, test } from './helpers/orca-app'
 import {
   createRuntimeDesktopPairingOffer,
@@ -120,7 +123,9 @@ for (const topology of ['desktop', 'headless'] as const) {
         ? headless.client.call('repo.add', { path: testRepoPath })
         : page.evaluate(async (path) => {
             await window.api.repos.add({ path })
-            await window.__store?.getState().fetchRepos()
+            await window.__store
+              ?.getState()
+              .fetchRepos({ runtimeEnvironmentId: null, throwOnError: true })
           }, testRepoPath))
       proxy = await interruptibleHost(offer)
       client = await launchPairedElectronClient(offer, testInfo, 'Direct host')

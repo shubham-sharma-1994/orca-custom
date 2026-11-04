@@ -1,10 +1,10 @@
 import type { IDisposable } from '@xterm/xterm'
 import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
-import type { PtyTransport } from './pty-transport'
+import type { PtyTransport } from './pty-transport-types'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
 import type { KeybindingOverrides, TerminalShortcutPolicy } from '../../../../shared/keybindings'
 import type { PaneCwdMap } from './resolve-split-cwd'
-import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
+import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal/protocol/input-modes/terminal-kitty-keyboard-mode-tracker'
 import type { SearchState } from './terminal-keyboard-shortcut-matching'
 
 export type KeyboardHandlersDeps = {

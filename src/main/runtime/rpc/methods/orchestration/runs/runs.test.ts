@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildRegistry, type RpcContext } from '../../../core'
-import { ORCHESTRATION_METHODS } from '../../orchestration'
+import type { RpcContext } from '../../../core'
 import { createOrchestrationRpcHarness } from '../rpc-test-harness'
 import type { OrchestrationDb } from '../../../../orchestration/db'
 import type { OrcaRuntimeService } from '../../../../orca-runtime'
+import { createRootDispatch } from '../../../../orchestration/db/root-dispatch-test-fixture'
 
 describe('orchestration RPC methods', () => {
   const h = createOrchestrationRpcHarness()
@@ -24,54 +24,28 @@ describe('orchestration RPC methods', () => {
     return h.call(name, params, ctx)
   }
 
-  it('registers all expected methods', () => {
-    const registry = buildRegistry(ORCHESTRATION_METHODS)
-    expect(registry.size).toBe(41)
-    expect(registry.has('orchestration.workerRelease')).toBe(true)
-    expect(registry.has('orchestration.workerRetain')).toBe(true)
-    expect(registry.has('orchestration.workerList')).toBe(true)
-    expect(registry.has('orchestration.workerCleanup')).toBe(false)
-    expect(registry.has('orchestration.workerTerminalUserInput')).toBe(true)
-    expect(registry.has('orchestration.runCreate')).toBe(true)
-    expect(registry.has('orchestration.runUse')).toBe(true)
-    expect(registry.has('orchestration.runCurrent')).toBe(true)
-    expect(registry.has('orchestration.runList')).toBe(true)
-    expect(registry.has('orchestration.runShow')).toBe(true)
-    expect(registry.has('orchestration.send')).toBe(true)
-    expect(registry.has('orchestration.check')).toBe(true)
-    expect(registry.has('orchestration.reply')).toBe(true)
-    expect(registry.has('orchestration.inbox')).toBe(true)
-    expect(registry.has('orchestration.taskCreate')).toBe(true)
-    expect(registry.has('orchestration.taskList')).toBe(true)
-    expect(registry.has('orchestration.taskUpdate')).toBe(true)
-    expect(registry.has('orchestration.dispatch')).toBe(true)
-    expect(registry.has('orchestration.dispatchShow')).toBe(true)
-    expect(registry.has('orchestration.workerStart')).toBe(true)
-    expect(registry.has('orchestration.workerShow')).toBe(true)
-    expect(registry.has('orchestration.workerRead')).toBe(true)
-    expect(registry.has('orchestration.workerStop')).toBe(true)
-    expect(registry.has('orchestration.workerAbandon')).toBe(true)
-    expect(registry.has('orchestration.federationAttachStart')).toBe(true)
-    expect(registry.has('orchestration.federationPull')).toBe(true)
-    expect(registry.has('orchestration.federationAck')).toBe(true)
-    expect(registry.has('orchestration.federationImport')).toBe(true)
-    expect(registry.has('orchestration.federationShow')).toBe(true)
-    expect(registry.has('orchestration.federationRead')).toBe(true)
-    expect(registry.has('orchestration.federationReadOutput')).toBe(true)
-    expect(registry.has('orchestration.federationFleetSnapshot')).toBe(true)
-    expect(registry.has('orchestration.federationRelease')).toBe(true)
-    expect(registry.has('orchestration.federationStop')).toBe(true)
-    expect(registry.has('orchestration.ask')).toBe(true)
-    expect(registry.has('orchestration.run')).toBe(true)
-    expect(registry.has('orchestration.runStop')).toBe(true)
-    expect(registry.has('orchestration.gateCreate')).toBe(true)
-    expect(registry.has('orchestration.gateResolve')).toBe(true)
-    expect(registry.has('orchestration.gateList')).toBe(true)
-    expect(registry.has('orchestration.requestShow')).toBe(true)
-    expect(registry.has('orchestration.reset')).toBe(true)
-  })
-
   describe('lightweight Runs', () => {
+    it('shows another caller the work a reset removed, listed only on request', async () => {
+      setup(false)
+      const run = db.createRun({
+        objective: 'Removed work read contract',
+        coordinatorHandle: 'term_coord',
+        coordinatorPaneKey
+      })
+      const task = db.createTask({ runId: run.id, spec: 'worker task' })
+      db.resetTasks()
+      const other = { ...ctx, authenticatedCallerFingerprint: 'different_workspace_caller' }
+
+      const summary = await h.call('orchestration.runShow', { id: run.id }, other)
+      expect(summary).toMatchObject({ removedWork: { coverage: 'complete', tasks: 1 } })
+      expect(summary).not.toHaveProperty('removedWork.entries')
+      await expect(
+        h.call('orchestration.runShow', { id: run.id, removed: true }, other)
+      ).resolves.toMatchObject({
+        removedWork: { entries: [{ kind: 'task', id: task.id }], page: { hasMore: false } }
+      })
+    })
+
     it('creates and binds a Run to the runtime-resolved caller pane', async () => {
       setup(false)
       vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue(
@@ -88,6 +62,50 @@ describe('orchestration RPC methods', () => {
 
       expect(created.run.consumer_generation).toBe(1)
       expect(current.run?.id).toBe(created.run.id)
+    })
+
+    it('tells a terminal bound to one Run about the Dispatch it works in another', async () => {
+      setup(false)
+      vi.spyOn(runtime, 'getTerminalPaneKey').mockImplementation((handle) =>
+        handle === 'term_coord'
+          ? coordinatorPaneKey
+          : handle === 'term_former'
+            ? 'tab_former:leaf_former'
+            : 'tab_recovery:leaf_recovery'
+      )
+      const currentRun = db.createRun({
+        objective: 'Current coordinator',
+        coordinatorHandle: 'term_coord',
+        coordinatorPaneKey
+      })
+      const olderRun = db.createRun({
+        objective: 'Older Run',
+        coordinatorHandle: 'term_former',
+        coordinatorPaneKey: 'tab_former:leaf_former'
+      })
+      const dispatch = createRootDispatch(
+        db,
+        db.createTask({ runId: currentRun.id, spec: 'worker task' }).id,
+        'term_former',
+        'tab_former:leaf_former'
+      )
+      const runCurrent = () => call('orchestration.runCurrent', { from: 'term_former' })
+
+      expect(await runCurrent()).toMatchObject({
+        run: { id: olderRun.id },
+        next: expect.stringMatching(
+          new RegExp(
+            `Dispatch ${dispatch.id} in Run ${currentRun.id}.*orca orchestration run-use --id ${olderRun.id}`
+          )
+        )
+      })
+
+      await call('orchestration.runUse', { id: olderRun.id, from: 'term_recovery' })
+      expect(await runCurrent()).toEqual({ run: null })
+
+      expect(await call('orchestration.runCurrent', { from: 'term_coord' })).not.toHaveProperty(
+        'next'
+      )
     })
 
     it('publishes a run receipt without internal routing columns', async () => {

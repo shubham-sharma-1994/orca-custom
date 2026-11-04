@@ -1,17 +1,8 @@
 {
+  "goldenFormatVersion": 6,
   "operation": "session.create-terminal",
   "family": "session.create-terminal",
   "namedDeltas": [],
-  "runnerVersion": 1,
-  "baseline": "02a55944347346065453e179e071e64d9ae861dc",
-  "lockfileSha256": "9317f3a98ab047f9f96fe26fd8531b8a632ac5954064b322f41a904148cbf6bb",
-  "recorderSha256": "0317fe2aebe4743ce5e7ae194531aa91b4fe0a84df457640851fe6dfdb9362af",
-  "adapterSha256": "fa7d9fd6428e89282f08e04fefba4289000eb3aed1462489a2f11efed374382c",
-  "scenarioSha256": "ae1572c1670073d0ac3d2d3abd0e7bee9910cbe4a0b09ecd941e887eeb1db165",
-  "platform": "darwin",
-  "scenarioVersion": 1,
-  "projectionVersion": 2,
-  "goldenFormatVersion": 5,
   "values": {
     "2977cbddd89f": {
       "name": "session.tabs.createTerminal#1",
@@ -58,6 +49,42 @@
         }
       }
     },
+    "2ae1c681a443": {
+      "activeHandle": "terminal-0",
+      "activeSessionTabId": "tab-0",
+      "createError": "outer refused",
+      "creating": false,
+      "initializedHandles": ["terminal-0"],
+      "pendingSelection": {
+        "$rpc": "null"
+      },
+      "sessionTabs": [],
+      "terminals": []
+    },
+    "3ac1092997d5": {
+      "name": "toast",
+      "ordinal": 3,
+      "value": {
+        "durationMs": 1800,
+        "message": "The host sent a reply this app could not read (session.tabs.createTerminal)"
+      }
+    },
+    "3ad31e99d9a0": {
+      "name": "toast",
+      "ordinal": 3,
+      "value": {
+        "durationMs": 1800,
+        "message": "Unknown method"
+      }
+    },
+    "3c6e5a949be0": {
+      "name": "toast",
+      "ordinal": 3,
+      "value": {
+        "durationMs": 1800,
+        "message": "outer refused"
+      }
+    },
     "4694ea73188a": {
       "name": "session.tabs.createTerminal#1",
       "ordinal": 1,
@@ -102,27 +129,26 @@
       "ordinal": 8,
       "json": "{\"id\":\"frame-2\",\"deviceToken\":\"recording-device\",\"method\":\"terminal.send\",\"params\":{\"terminal\":\"terminal-1\",\"text\":\"review these notes\",\"enter\":true,\"client\":{\"id\":\"device-token-1\",\"type\":\"mobile\"}}}"
     },
-    "4c528a84c114": {
-      "activeHandle": "terminal-0",
-      "activeSessionTabId": "tab-0",
-      "createError": "",
-      "creating": true,
-      "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
-        "$rpc": "null"
-      },
-      "sessionTabs": [],
-      "terminals": []
-    },
     "4d318de3b635": {
       "name": "unsubscribe-terminal",
       "ordinal": 3,
       "value": {
         "handle": "terminal-0"
       }
+    },
+    "4e377b1c4bf7": {
+      "activeHandle": "terminal-1",
+      "activeSessionTabId": "tab-1",
+      "createError": "",
+      "creating": false,
+      "initializedHandles": [],
+      "pendingSelection": {
+        "handle": "terminal-1",
+        "kind": "terminal",
+        "tabId": "tab-1"
+      },
+      "sessionTabs": ["tab-1"],
+      "terminals": ["terminal-1"]
     },
     "52c96555f2b3": {
       "name": "toast",
@@ -176,16 +202,13 @@
         }
       }
     },
-    "66fb424500fb": {
+    "6275ace50da2": {
       "activeHandle": "terminal-0",
       "activeSessionTabId": "tab-0",
-      "createError": "Couldn't run Notes",
-      "creating": false,
+      "createError": "",
+      "creating": true,
       "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
+      "pendingSelection": {
         "$rpc": "null"
       },
       "sessionTabs": [],
@@ -228,6 +251,18 @@
         }
       }
     },
+    "76f2a4b2872b": {
+      "activeHandle": "terminal-0",
+      "activeSessionTabId": "tab-0",
+      "createError": "The host sent a reply this app could not read (session.tabs.createTerminal)",
+      "creating": false,
+      "initializedHandles": ["terminal-0"],
+      "pendingSelection": {
+        "$rpc": "null"
+      },
+      "sessionTabs": [],
+      "terminals": []
+    },
     "7a456c263146": {
       "name": "terminal.send#1",
       "ordinal": 6,
@@ -259,36 +294,6 @@
         "status": "pending",
         "startedAt": 0
       }
-    },
-    "80b4f6cd8f72": {
-      "activeHandle": "terminal-0",
-      "activeSessionTabId": "tab-0",
-      "createError": "transport failure",
-      "creating": false,
-      "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
-        "$rpc": "null"
-      },
-      "sessionTabs": [],
-      "terminals": []
-    },
-    "82f962f68412": {
-      "activeHandle": "terminal-0",
-      "activeSessionTabId": "tab-0",
-      "createError": "outer refused",
-      "creating": false,
-      "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
-        "$rpc": "null"
-      },
-      "sessionTabs": [],
-      "terminals": []
     },
     "8b3dd0429232": {
       "name": "session.tabs.createTerminal#1",
@@ -381,57 +386,29 @@
         "delayMs": 500
       }
     },
-    "990a90b8755e": {
+    "96cb96f54156": {
       "activeHandle": "terminal-0",
       "activeSessionTabId": "tab-0",
-      "createError": "Unknown method",
+      "createError": "transport failure",
       "creating": false,
       "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
+      "pendingSelection": {
         "$rpc": "null"
       },
       "sessionTabs": [],
       "terminals": []
     },
-    "a25f5365fc53": {
-      "name": "session.tabs.createTerminal#1",
-      "ordinal": 1,
-      "args": [
-        {
-          "name": "method",
-          "value": "session.tabs.createTerminal"
-        },
-        {
-          "name": "params",
-          "value": {
-            "activate": false,
-            "afterTabId": "tab-0",
-            "clientMutationId": "mobile-create:mjuohs00-8ig2hens",
-            "navigation": "caller",
-            "select": true,
-            "worktree": "id:wt-1"
-          }
-        },
-        {
-          "name": "options",
-          "value": {
-            "$rpc": "absent"
-          }
-        }
-      ],
-      "settlement": {
-        "status": "rejected",
-        "startedAt": 0,
-        "settledAt": 0,
-        "error": {
-          "category": "Error",
-          "message": "Connection closed",
-          "isRpcDeliveryUnknown": true
-        }
-      }
+    "a9d892293481": {
+      "activeHandle": "terminal-0",
+      "activeSessionTabId": "tab-0",
+      "createError": "Couldn't run Notes",
+      "creating": false,
+      "initializedHandles": ["terminal-0"],
+      "pendingSelection": {
+        "$rpc": "null"
+      },
+      "sessionTabs": [],
+      "terminals": []
     },
     "b1152db10a02": {
       "name": "toast",
@@ -470,6 +447,14 @@
       "settlement": {
         "status": "pending",
         "startedAt": 0
+      }
+    },
+    "b67f7950d99d": {
+      "name": "toast",
+      "ordinal": 3,
+      "value": {
+        "durationMs": 1800,
+        "message": "transport failure"
       }
     },
     "c13357779299": {
@@ -563,6 +548,18 @@
       "ordinal": 2,
       "json": "{\"id\":\"frame-1\",\"deviceToken\":\"recording-device\",\"method\":\"session.tabs.createTerminal\",\"params\":{\"worktree\":\"id:wt-1\",\"afterTabId\":\"tab-0\",\"clientMutationId\":\"mobile-create:mjuohs00-8ig2hens\",\"activate\":false,\"select\":true,\"navigation\":\"caller\"}}"
     },
+    "d6dddfd9c6a4": {
+      "activeHandle": "terminal-0",
+      "activeSessionTabId": "tab-0",
+      "createError": "Unknown method",
+      "creating": false,
+      "initializedHandles": ["terminal-0"],
+      "pendingSelection": {
+        "$rpc": "null"
+      },
+      "sessionTabs": [],
+      "terminals": []
+    },
     "e247d725ee7d": {
       "name": "fetch-session-tabs",
       "ordinal": 10,
@@ -604,21 +601,6 @@
           "isRpcDeliveryUnknown": true
         }
       }
-    },
-    "e418d760df6a": {
-      "activeHandle": "terminal-0",
-      "activeSessionTabId": "tab-0",
-      "createError": "The host sent a reply this app could not read (session.tabs.createTerminal)",
-      "creating": false,
-      "initializedHandles": ["terminal-0"],
-      "pendingActiveSessionTabId": {
-        "$rpc": "null"
-      },
-      "pendingActiveTerminalHandle": {
-        "$rpc": "null"
-      },
-      "sessionTabs": [],
-      "terminals": []
     },
     "e5f7b12b349b": {
       "name": "session.tabs.createTerminal#1",
@@ -746,17 +728,6 @@
         }
       }
     },
-    "f30a8fc69921": {
-      "activeHandle": "terminal-1",
-      "activeSessionTabId": "tab-1",
-      "createError": "",
-      "creating": false,
-      "initializedHandles": [],
-      "pendingActiveSessionTabId": "tab-1",
-      "pendingActiveTerminalHandle": "terminal-1",
-      "sessionTabs": ["tab-1"],
-      "terminals": ["terminal-1"]
-    },
     "fb6329365e0b": {
       "name": "default-live-input",
       "ordinal": 4,
@@ -777,21 +748,8 @@
             "mount": "eb79a9b3682a",
             "create": "9270aeb7d9c6"
           },
-          "state": "4c528a84c114",
+          "state": "6275ace50da2",
           "effects": []
-        }
-      },
-      {
-        "id": "session-create-terminal-with-prompt.prelude:cleanup",
-        "observation": {
-          "sender": ["a25f5365fc53"],
-          "payloads": ["cce8a731064a"],
-          "settlements": {
-            "mount": "eb79a9b3682a",
-            "create": "eb79a9b3682a"
-          },
-          "state": "4c528a84c114",
-          "effects": ["b1152db10a02"]
         }
       },
       {
@@ -803,7 +761,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "f30a8fc69921",
+          "state": "4e377b1c4bf7",
           "effects": ["4d318de3b635", "fb6329365e0b", "c13357779299", "95bcf41e673e"]
         }
       },
@@ -816,7 +774,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "f30a8fc69921",
+          "state": "4e377b1c4bf7",
           "effects": [
             "4d318de3b635",
             "fb6329365e0b",
@@ -835,7 +793,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "f30a8fc69921",
+          "state": "4e377b1c4bf7",
           "effects": [
             "4d318de3b635",
             "fb6329365e0b",
@@ -855,8 +813,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -868,8 +826,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -881,8 +839,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -894,8 +852,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -907,8 +865,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -920,8 +878,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -933,8 +891,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -946,8 +904,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -959,8 +917,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -972,8 +930,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -985,8 +943,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -998,8 +956,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -1011,8 +969,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -1024,8 +982,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -1037,8 +995,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "e418d760df6a",
-          "effects": ["b1152db10a02"]
+          "state": "76f2a4b2872b",
+          "effects": ["3ac1092997d5"]
         }
       },
       {
@@ -1050,8 +1008,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "82f962f68412",
-          "effects": ["b1152db10a02"]
+          "state": "2ae1c681a443",
+          "effects": ["3c6e5a949be0"]
         }
       },
       {
@@ -1063,8 +1021,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "82f962f68412",
-          "effects": ["b1152db10a02"]
+          "state": "2ae1c681a443",
+          "effects": ["3c6e5a949be0"]
         }
       },
       {
@@ -1076,8 +1034,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "82f962f68412",
-          "effects": ["b1152db10a02"]
+          "state": "2ae1c681a443",
+          "effects": ["3c6e5a949be0"]
         }
       },
       {
@@ -1089,7 +1047,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       },
@@ -1102,7 +1060,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       },
@@ -1115,7 +1073,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       },
@@ -1128,8 +1086,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "990a90b8755e",
-          "effects": ["b1152db10a02"]
+          "state": "d6dddfd9c6a4",
+          "effects": ["3ad31e99d9a0"]
         }
       },
       {
@@ -1141,8 +1099,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "990a90b8755e",
-          "effects": ["b1152db10a02"]
+          "state": "d6dddfd9c6a4",
+          "effects": ["3ad31e99d9a0"]
         }
       },
       {
@@ -1154,8 +1112,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "990a90b8755e",
-          "effects": ["b1152db10a02"]
+          "state": "d6dddfd9c6a4",
+          "effects": ["3ad31e99d9a0"]
         }
       },
       {
@@ -1167,8 +1125,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "80b4f6cd8f72",
-          "effects": ["b1152db10a02"]
+          "state": "96cb96f54156",
+          "effects": ["b67f7950d99d"]
         }
       },
       {
@@ -1180,8 +1138,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "80b4f6cd8f72",
-          "effects": ["b1152db10a02"]
+          "state": "96cb96f54156",
+          "effects": ["b67f7950d99d"]
         }
       },
       {
@@ -1193,8 +1151,8 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "80b4f6cd8f72",
-          "effects": ["b1152db10a02"]
+          "state": "96cb96f54156",
+          "effects": ["b67f7950d99d"]
         }
       },
       {
@@ -1206,7 +1164,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       },
@@ -1219,7 +1177,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       },
@@ -1232,7 +1190,7 @@
             "mount": "eb79a9b3682a",
             "create": "eb79a9b3682a"
           },
-          "state": "66fb424500fb",
+          "state": "a9d892293481",
           "effects": ["b1152db10a02"]
         }
       }

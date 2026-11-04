@@ -1,14 +1,19 @@
 import type { SubscriptionRegistration } from '../orca-runtime'
 
 type Cleanup = () => void | Promise<void>
-type Entry = { cleanup: Cleanup; version: number }
+type Entry = {
+  cleanup: Cleanup
+  version: number
+  request?: { connectionId: string; requestId: string }
+}
 
 export type SubscriptionRegistryDouble = {
   registerSubscriptionCleanup: (id: string, cleanup: Cleanup, connectionId?: string) => void
   registerOwnedSubscriptionCleanup: (
     id: string,
     cleanup: Cleanup,
-    connectionId?: string
+    connectionId?: string,
+    requestId?: string
   ) => SubscriptionRegistration
   cleanupSubscription: (id: string) => void
   cleanupSubscriptionIfOwnedByConnection: (
@@ -17,32 +22,36 @@ export type SubscriptionRegistryDouble = {
     throughVersion?: number
   ) => boolean
   getSubscriptionRegistrationVersion: () => number
+  releaseSubscriptionByRequest: (connectionId: string | undefined, requestId: string) => void
   cleanupSubscriptionsForConnection: (connectionId: string) => void
   /** Test-only inspection; the runtime deliberately exposes no such accessor. */
   peekCleanup: (id: string) => Cleanup | undefined
+  /** Test-only inspection of the request-address index size. */
+  requestAddressCount: () => number
 }
 
-/**
- * Faithful double of the runtime subscription registry (`OrcaRuntimeService`,
- * `registerSubscriptionCleanup` through `cleanupSubscriptionsForConnection`).
- *
- * This mirrors production line-for-line, so it can drift. If you change
- * `registerSubscriptionCleanup`, `cleanupSubscriptionAndWait`,
- * `cleanupOwnedSubscription`, `cleanupSubscriptionIfOwnedByConnection`, or
- * `cleanupSubscriptionsForConnection`, change this too — the runtime-level tests in
- * `orca-runtime.test.ts` are what pin the real behavior; these doubles only pin routing.
- *
- * Why this exists: the ad-hoc `Map` stubs these tests used to carry never evicted the
- * prior generation and had no connection index, so no test could observe a
- * cross-generation teardown — which is how STA-4510 shipped. Anything exercising
- * subscribe/teardown must use this instead of a bare Map.
- */
+/** Keep generation eviction, connection/request indexes and cleanup behavior aligned with OrcaRuntimeService; orca-runtime.test.ts pins production, these doubles pin routing.
+ * Use this for subscribe/teardown tests: bare Maps missed cross-generation teardown (STA-4510). */
 export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
   const cleanups = new Map<string, Entry>()
   const inFlight = new Map<string, { entry: Entry; promise: Promise<void> }>()
   let registrationVersion = 0
   const byConnection = new Map<string, Set<string>>()
   const connectionByEntry = new Map<string, string>()
+  const byRequest = new Map<string, { id: string; entry: Entry }>()
+  const requestKey = (connectionId: string, requestId: string): string =>
+    JSON.stringify([connectionId, requestId])
+
+  // Mirrors removeRequestIndex: compare-and-delete, so a reused request id keeps its newer owner.
+  const removeRequestIndex = (entry: Entry): void => {
+    if (!entry.request) {
+      return
+    }
+    const key = requestKey(entry.request.connectionId, entry.request.requestId)
+    if (byRequest.get(key)?.entry === entry) {
+      byRequest.delete(key)
+    }
+  }
 
   const removeIndex = (id: string): void => {
     const connectionId = connectionByEntry.get(id)
@@ -84,6 +93,7 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
         }
         cleanups.delete(id)
         removeIndex(id)
+        removeRequestIndex(entry)
       })
       .finally(() => {
         if (inFlight.get(id)?.promise === promise) {
@@ -109,15 +119,21 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
   const registerSubscriptionCleanup = (
     id: string,
     cleanup: Cleanup,
-    connectionId?: string
+    connectionId?: string,
+    requestId?: string
   ): Entry => {
     const existing = cleanups.get(id)
     if (existing) {
       removeIndex(id)
+      removeRequestIndex(existing)
       cleanupOwned(id, existing)
     }
-    const entry = { cleanup, version: ++registrationVersion }
+    const request = connectionId && requestId ? { connectionId, requestId } : undefined
+    const entry: Entry = { cleanup, version: ++registrationVersion, request }
     cleanups.set(id, entry)
+    if (request) {
+      byRequest.set(requestKey(request.connectionId, request.requestId), { id, entry })
+    }
     if (!connectionId) {
       return entry
     }
@@ -133,14 +149,23 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
 
   return {
     registerSubscriptionCleanup,
-    registerOwnedSubscriptionCleanup: (id, cleanup, connectionId) => {
-      const entry = registerSubscriptionCleanup(id, cleanup, connectionId)
+    registerOwnedSubscriptionCleanup: (id, cleanup, connectionId, requestId) => {
+      const entry = registerSubscriptionCleanup(id, cleanup, connectionId, requestId)
       return {
         releaseIfCurrent: () => cleanupOwned(id, entry)
       }
     },
     cleanupSubscription,
     getSubscriptionRegistrationVersion: () => registrationVersion,
+    releaseSubscriptionByRequest: (connectionId, requestId) => {
+      if (!connectionId) {
+        return
+      }
+      const target = byRequest.get(requestKey(connectionId, requestId))
+      if (target) {
+        cleanupOwned(target.id, target.entry)
+      }
+    },
     cleanupSubscriptionIfOwnedByConnection: (id, connectionId, throughVersion) => {
       const entry = cleanups.get(id)
       // Mirrors the production early-out: an unregistered id is already gone, not refused.
@@ -173,6 +198,7 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
         byConnection.delete(connectionId)
       }
     },
-    peekCleanup: (id) => cleanups.get(id)?.cleanup
+    peekCleanup: (id) => cleanups.get(id)?.cleanup,
+    requestAddressCount: () => byRequest.size
   }
 }

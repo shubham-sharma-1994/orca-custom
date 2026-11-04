@@ -3,17 +3,12 @@ import { readySession, run } from './mobile-web-shell-session-test-fixtures'
 import { shellPageBackClaimed } from './shell-page-back-claim'
 import type { MobileWebShellStep } from './mobile-web-shell-session-contract'
 
-/**
- * The device Back key, which the shell hands over only while the page is holding it.
- *
- * A claim that outlived its document would have Back go to a page with nothing to do with it, so
- * every reset path is a case here and the reader is gated on the generation still being on screen.
- */
+// Exercise every document reset: stale Back claims must never route a press to a page that no longer holds it.
 describe('the page claiming the device Back key', () => {
   function claimed(): MobileWebShellStep {
     return run(
       readySession().session,
-      { type: 'page-ready', reports: [], accepts: [] },
+      { type: 'page-ready' },
       { type: 'page-back-claim', claimed: true }
     )
   }
@@ -38,7 +33,7 @@ describe('the page claiming the device Back key', () => {
   })
 
   it('drops it when the document asks for a session again, so the page has to claim again', () => {
-    const reasked = run(claimed().session, { type: 'page-ready', reports: [], accepts: [] })
+    const reasked = run(claimed().session, { type: 'page-ready' })
     expect(shellPageBackClaimed(reasked.session)).toBe(false)
   })
 

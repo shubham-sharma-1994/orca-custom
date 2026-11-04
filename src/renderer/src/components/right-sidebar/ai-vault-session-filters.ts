@@ -1,29 +1,14 @@
 import { useMemo } from 'react'
-import type { AiVaultGroup, AiVaultSession } from '../../../../shared/ai-vault-types'
+import type {
+  AiVaultGroup,
+  AiVaultSession
+} from '../../../../shared/ai-vault/contracts/ai-vault-types'
 import {
   filterAiVaultSessions,
   groupAiVaultSessions,
   type AiVaultSessionFilterState
-} from '../../../../shared/ai-vault-session-filters'
-// Why: the pure filter/group/query core now lives in /shared so the mobile
-// package can reuse it (Metro can't import renderer). Re-export for renderer
-// import parity. Not a byte-for-byte move: tokenizeQuery gained quoted
-// repo:/path: operator values (e.g. path:"/a/My Project"), which the old
-// renderer tokenizer split on spaces.
-export type {
-  AiVaultSessionProject,
-  AiVaultSessionFilterState,
-  AiVaultSessionGroup
-} from '../../../../shared/ai-vault-session-filters'
-export {
-  AI_VAULT_SESSION_FILTER_QUERY_MAX_BYTES,
-  agentLabel,
-  filterAiVaultSessions,
-  folderLabel,
-  groupAiVaultSessions,
-  isAiVaultSessionFilterQueryTooLarge,
-  parseVaultQuery
-} from '../../../../shared/ai-vault-session-filters'
+} from '../../../../shared/ai-vault/session-display/ai-vault-session-filters'
+// Keep renderer imports stable while mobile reuses the shared core; Metro cannot import renderer code.
 
 /** What the list renders: a null label is a group of rows with no header of its own. */
 export type AiVaultSessionListGroup = {

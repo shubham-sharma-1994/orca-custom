@@ -46,8 +46,8 @@ describe('OMP completion delivery', () => {
     await vi.advanceTimersByTimeAsync(curlExitCode === null ? 11251 : 251)
     expect(harness.spawnMock).toHaveBeenCalledTimes(2)
     await harness.callHook('session_shutdown')
-    await vi.advanceTimersByTimeAsync(12000)
-    expect(harness.spawnMock).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(harness.spawnMock).toHaveBeenCalledTimes(4)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -87,7 +87,7 @@ describe('OMP completion delivery', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it.each(['before_agent_start', 'agent_start', 'session_shutdown', 'session_switch'])(
+  it.each(['before_agent_start', 'agent_start'])(
     'retires a failed completion at %s',
     async (boundary) => {
       const harness = createAgentStatusExtensionHarness({ kind: 'omp' })
@@ -122,6 +122,59 @@ describe('OMP completion delivery', () => {
     ])
   })
 
+  it.each(['scheduled retry', 'in-flight failure', 'in-flight success'] as const)(
+    'preserves completion delivery across a session boundary after %s',
+    async (delivery) => {
+      const harness = createAgentStatusExtensionHarness({ kind: 'omp' })
+      let id = 'A'
+      const ctx = {
+        isIdle: () => true,
+        sessionManager: { getSessionId: () => id, getSessionFile: () => `/sessions/${id}.jsonl` }
+      }
+      await harness.callHook('agent_start', {}, ctx)
+      await vi.advanceTimersByTimeAsync(0)
+      let acknowledge: ((value: { ok: boolean }) => void) | undefined
+      let fail: ((error: Error) => void) | undefined
+      if (delivery === 'scheduled retry') {
+        harness.fetchMock.mockRejectedValueOnce(new Error('offline'))
+      } else {
+        harness.fetchMock.mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              acknowledge = resolve
+              fail = reject
+            })
+        )
+      }
+      await harness.callHook('agent_end', {}, ctx)
+      await vi.advanceTimersByTimeAsync(0)
+      id = 'B'
+      await harness.callHook('session_switch', { reason: 'new' }, ctx)
+      await harness.callHook('agent_start', {}, ctx)
+      if (delivery === 'in-flight failure') {
+        fail?.(new Error('late failure'))
+      } else {
+        acknowledge?.({ ok: true })
+      }
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      const payloads = events(harness.fetchMock)
+      const completions = payloads.filter(
+        (event) =>
+          event &&
+          typeof event === 'object' &&
+          'hook_event_name' in event &&
+          event.hook_event_name === 'agent_end'
+      )
+      expect(completions).toHaveLength(delivery === 'in-flight success' ? 1 : 2)
+      for (const completion of completions) {
+        expect(completion).toMatchObject({ session_id: 'A' })
+      }
+      expect(payloads.at(-1)).toMatchObject({ hook_event_name: 'agent_start', session_id: 'B' })
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
+
   it('retries a timed out completion without blocking agent handlers', async () => {
     const harness = createAgentStatusExtensionHarness({ kind: 'omp' })
     harness.fetchMock.mockImplementationOnce(() => new Promise(() => {}))
@@ -146,5 +199,39 @@ describe('OMP completion delivery', () => {
     await vi.advanceTimersByTimeAsync(30_000)
     expect(harness.fetchMock).toHaveBeenCalledTimes(4)
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('Pi cancelled-turn completion', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  // Why: without the verdict the host records a cancelled automation run as completed (STA-12638).
+  it.each([
+    { name: 'a cancelled reply', reply: { stopReason: 'aborted' }, fields: { interrupted: true } },
+    {
+      name: 'a reply cancelled mid-tool',
+      reply: { stopReason: 'error', errorMessage: 'The operation was aborted.' },
+      fields: { interrupted: true }
+    },
+    {
+      name: 'a failed reply',
+      reply: { stopReason: 'error', errorMessage: 'fetch failed' },
+      fields: {}
+    },
+    {
+      name: 'a finished reply',
+      reply: { stopReason: 'stop' },
+      fields: { turn_completed_at: expect.any(Number) }
+    }
+  ])('ends $name with its verdict', async ({ reply, fields }) => {
+    const harness = createAgentStatusExtensionHarness({ kind: 'pi' })
+    await harness.callHook('agent_start')
+    await harness.callHook('agent_end', {
+      messages: [{ role: 'user' }, { role: 'assistant', ...reply }]
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(events(harness.fetchMock).at(-1)).toEqual({ hook_event_name: 'agent_end', ...fields })
   })
 })

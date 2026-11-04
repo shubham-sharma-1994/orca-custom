@@ -2,13 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildProcessBoundaryGround,
   PROCESS_BOUNDARY_GROUND
-} from '../../shared/terminal-mode-reset-profiles'
+} from '../../shared/terminal/protocol/input-modes/terminal-mode-reset-profiles'
 import { Session } from './session'
 import { TerminalShellLifecycleScanner } from './terminal-shell-lifecycle-scanner'
 import type { SubprocessHandle } from './session-subprocess-handle'
-
-// Why this suite: a normal-buffer program that arms input modes and dies used
-// to be cleaned only in the renderer, so the daemon kept the stale modes.
 
 const COMMAND_START = '\x1b]133;C\x07'
 const COMMAND_DONE = '\x1b]133;D;1\x07'
@@ -24,7 +21,8 @@ describe('armed input modes arm the unclean-death trigger', () => {
     ['mouse protocol and SGR encoding', '\x1b[?1003h\x1b[?1006h'],
     ['focus reporting', '\x1b[?1004h'],
     ['a kitty keyboard push', '\x1b[>1u'],
-    ['application keypad', '\x1b[?66h']
+    ['application keypad', '\x1b[?66h'],
+    ["pi's modifyOtherKeys fallback", '\x1b[>4;2m']
   ])('triggers when a normal-buffer program dies with %s armed', (_label, arm) => {
     const scanner = new TerminalShellLifecycleScanner()
     const chunk = `${COMMAND_START}${arm}PROGRAM${COMMAND_DONE}$ `
@@ -32,6 +30,14 @@ describe('armed input modes arm the unclean-death trigger', () => {
     const events = scanner.scan(chunk)
 
     expect(events.uncleanDeathTriggerEnd).toBe(chunk.length - '$ '.length)
+  })
+
+  it('does not trigger once modifyOtherKeys is disarmed, and the ground disarms it', () => {
+    const scanner = new TerminalShellLifecycleScanner()
+    expect(triggers(scanner, `${COMMAND_START}\x1b[>4;2mpi\x1b[>4;0m${COMMAND_DONE}`)).toBe(false)
+    expect(triggers(scanner, `${COMMAND_START}\x1b[>4;2m${COMMAND_DONE}`)).toBe(true)
+    scanner.groundProcessBoundary()
+    expect(triggers(scanner, `${COMMAND_START}ls${COMMAND_DONE}`)).toBe(false)
   })
 
   it('never triggers for modes a shell prompt arms itself', () => {
@@ -50,19 +56,18 @@ describe('armed input modes arm the unclean-death trigger', () => {
     expect(triggers(scanner, chunk)).toBe(false)
   })
 
-  it('stays one-shot until a fresh enable', () => {
+  it('re-triggers at every D until the mode is disarmed', () => {
     const scanner = new TerminalShellLifecycleScanner()
 
     expect(triggers(scanner, `${COMMAND_START}\x1b[?1004hRUN${COMMAND_DONE}`)).toBe(true)
-    // A refuted proof leaves ?1004 armed; later prompts must not pause again.
-    expect(triggers(scanner, `$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(false)
-    expect(triggers(scanner, `$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(false)
-    expect(triggers(scanner, `$ ${COMMAND_START}\x1b[?1000hRUN${COMMAND_DONE}`)).toBe(true)
+    // A refuted proof leaves ?1004 armed and command-owned; each later D re-asks.
+    expect(triggers(scanner, `$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(true)
+    expect(triggers(scanner, `$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(true)
+    expect(triggers(scanner, `\x1b[?1004l$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(false)
   })
 
   it('treats modes the prompt armed before the command started as shell-owned', () => {
-    // fish's sequence (src/tty_handoff.rs; no recorded transcript): under tmux it arms
-    // focus, sets kitty flags with `=5u` at the prompt and clears them with `=0u` before a command.
+    // Synthetic fish prompt sequence from src/tty_handoff.rs; no captured transcript covers it.
     const scanner = new TerminalShellLifecycleScanner()
     const prompt = '\x1b[?1004h\x1b[=5u$ \x1b[=0u'
 
@@ -77,7 +82,6 @@ describe('armed input modes arm the unclean-death trigger', () => {
     expect(
       triggers(scanner, `$ ${COMMAND_START}\x1b[?1049h\x1b[>1uTUI\x1b[?1049l${COMMAND_DONE}`)
     ).toBe(false)
-    // The shell prompt's own main-screen flags survive a TUI's alt round trip.
     expect(
       triggers(
         scanner,
@@ -94,7 +98,7 @@ describe('armed input modes arm the unclean-death trigger', () => {
 
   it('bounds the kitty stack so the ground can always clear it', () => {
     const scanner = new TerminalShellLifecycleScanner()
-    // Uncapped, 250 pushes outlast the ground's two pop-99s, so a later pop would restore flags 5.
+    // Model xterm’s stack cap, or 250 pushes would outlast the ground’s two pop-99 resets.
     scanner.scan(`${COMMAND_START}${'\x1b[>5u'.repeat(250)}RUN`)
     scanner.scan(PROCESS_BOUNDARY_GROUND)
 
@@ -126,7 +130,6 @@ describe('armed input modes arm the unclean-death trigger', () => {
     expect(triggers(scanner, `${prompt}\x1b[?1003h\x1b[>1uRUN${COMMAND_DONE}`)).toBe(true)
     const generation = scanner.generation
 
-    // Kitty flags are never the host's: the ground clears them and the next prompt sets its own.
     expect(scanner.groundProcessBoundary()).toBe(HOST_FOCUS_GROUND)
     expect(scanner.generation).toBe(generation)
     expect(triggers(scanner, `$ ${COMMAND_START}ls${COMMAND_DONE}`)).toBe(false)
@@ -327,7 +330,7 @@ describe('Session grounds a proven normal-buffer death', () => {
     await vi.waitFor(() => expect(sub.confirmShellForeground).toHaveBeenCalledTimes(1))
     await session.settleShellOwnershipConfirmation()
     confirmed = true
-    // Why a fresh arm: the one-shot trigger re-arms only on a new enable.
+    // Exercise another recovery episode after a refuted foreground proof.
     sub.emit(`${PROMPT_START}PS> ${COMMAND_START}\x1b[?1000hRUN\r\n${COMMAND_DONE}PS> `)
     await vi.waitFor(() => expect(sub.confirmShellForeground).toHaveBeenCalledTimes(2))
     await session.settleShellOwnershipConfirmation()
@@ -340,6 +343,24 @@ describe('Session grounds a proven normal-buffer death', () => {
     ).toBe(true)
     expect(snapshot?.modes.mouseTrackingMode).toBe('none')
     expect(snapshot?.snapshotAnsi).toContain('\x1b[?1004h')
+  })
+
+  it("grounds an agent's modes when it dies after nested shells' refuted Ds", async () => {
+    const leak = { data: `${COMMAND_START}nested\r\n${COMMAND_DONE}`, confirm: false }
+    const { snapshot, records, proofs } = await runSteps([
+      { data: `${PROMPT_START}$ ${COMMAND_START}\x1b[>1u\x1b[?1003hAGENT` },
+      ...Array.from({ length: 5 }, () => leak),
+      { data: `EXIT\r\n${COMMAND_DONE}${PROMPT_START}$ `, confirm: true },
+      { data: `${COMMAND_START}ls\r\n${COMMAND_DONE}${PROMPT_START}$ ` }
+    ])
+
+    expect(proofs).toBe(6)
+    expect(
+      records.some(
+        (record) => record.kind === 'output' && record.data.includes(PROCESS_BOUNDARY_GROUND)
+      )
+    ).toBe(true)
+    expect(snapshot?.modes.mouseTrackingMode).toBe('none')
   })
 
   it('flushes without the ground when the proof is refuted', async () => {

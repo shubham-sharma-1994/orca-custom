@@ -4,15 +4,24 @@ import {
   AGENT_SESSION_RESTART_CONTINUATION_REFUSED_NOTE,
   AGENT_SESSION_RESTART_CONTINUATION_UNCONFIRMED_NOTE,
   AGENT_SESSION_RESTART_NOT_CONNECTED_NOTE
-} from '../../../shared/agent-session-restart-continuation'
+} from '../../../shared/agent-session/lifecycle/agent-session-restart-continuation'
 import {
-  continueStructuredAgentSessionAfterRestart,
   RestartContinuationSupersededError,
+  startStructuredAgentSessionContinuation,
   type StructuredAgentSessionContinuationDeps
 } from './structured-agent-session-restart-continuation'
+import { createStructuredAgentSessionLogger } from './structured-agent-session-logger'
+
+async function continueStructuredAgentSessionAfterRestart(
+  ...args: Parameters<typeof startStructuredAgentSessionContinuation>
+) {
+  const started = await startStructuredAgentSessionContinuation(...args)
+  return 'done' in started ? started.done : started.verdict()
+}
 
 function dependencies(
-  settledDispatch: 'accepted' | 'pending' | 'unknown' | 'rejected'
+  settledDispatch: 'accepted' | 'pending' | 'unknown' | 'rejected',
+  handedOver: 'pending' | 'rejected' | undefined = 'pending'
 ): StructuredAgentSessionContinuationDeps & {
   note: ReturnType<typeof vi.fn>
   send: ReturnType<typeof vi.fn>
@@ -27,8 +36,16 @@ function dependencies(
       dispatchState: settledDispatch,
       reason: settledDispatch === 'rejected' ? 'provider_refused' : null
     })),
+    awaitHandedOver: vi.fn(async () =>
+      handedOver
+        ? {
+            dispatchState: handedOver,
+            reason: handedOver === 'rejected' ? 'Codex could not start.' : null
+          }
+        : undefined
+    ),
     note: vi.fn(async () => undefined),
-    onNoteFailed: vi.fn()
+    logger: createStructuredAgentSessionLogger()
   }
 }
 
@@ -36,7 +53,7 @@ it('reports an accepted continuation and records its note', async () => {
   const deps = dependencies('accepted')
 
   await expect(
-    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker())
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
   ).resolves.toEqual({
     sessionId: SESSION,
     outcome: 'continued'
@@ -58,23 +75,23 @@ it.each([
     const deps = dependencies(settled)
 
     await expect(
-      continueStructuredAgentSessionAfterRestart(deps, SESSION, marker())
+      continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
     ).resolves.toEqual(expected)
     expect(deps.note).toHaveBeenCalledExactlyOnceWith(...note)
   }
 )
 
-it('notes a superseded continuation in the chat and still reports the refusal', async () => {
+it("writes nothing in the chat when the user's own message came first, and still refuses", async () => {
   const deps = dependencies('accepted')
   deps.send.mockRejectedValue(new RestartContinuationSupersededError())
 
   await expect(
-    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker())
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
   ).rejects.toBeInstanceOf(RestartContinuationSupersededError)
-  expect(deps.note).toHaveBeenCalledExactlyOnceWith(...REFUSED)
+  expect(deps.note).not.toHaveBeenCalled()
 })
 
-// An ownership refusal would meet the user's own message too, so the note gives no advice to send one.
+// Ownership refusal also blocks personal sends; do not advise sending one.
 it.each([
   ['agent_session_conflict', NOT_CONNECTED],
   ['agent_session_operation_invalid', REFUSED]
@@ -83,14 +100,33 @@ it.each([
   deps.send.mockResolvedValue({ ok: false, refusal: { code } })
 
   await expect(
-    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker())
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
   ).resolves.toEqual({
     sessionId: SESSION,
     outcome: 'refused',
-    reason: code
+    reason: code,
+    refusal: { code }
   })
   expect(deps.awaitSettlement).not.toHaveBeenCalled()
   expect(deps.note).toHaveBeenCalledExactlyOnceWith(...note)
+})
+
+it('reports a newer-Orca send refusal with its reason', async () => {
+  const deps = dependencies('accepted')
+  const refusal = {
+    code: 'agent_session_journal_unreadable',
+    details: { reason: 'journalWrittenByNewerOrca' }
+  } as const
+  deps.send.mockResolvedValue({ ok: false, refusal: { ...refusal, message: 'Update Orca.' } })
+
+  await expect(
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
+  ).resolves.toEqual({
+    sessionId: SESSION,
+    outcome: 'refused',
+    reason: 'agent_session_journal_unreadable',
+    refusal
+  })
 })
 
 it('reports an unattached chat without sending', async () => {
@@ -98,11 +134,49 @@ it('reports an unattached chat without sending', async () => {
   deps.currentFence = () => null
 
   await expect(
-    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker())
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
   ).resolves.toEqual({
     sessionId: SESSION,
     outcome: 'refused',
     reason: 'agent_session_not_attached'
   })
   expect(deps.send).not.toHaveBeenCalled()
+})
+
+it('reports a continuation rejected at handover without waiting for the provider', async () => {
+  const deps = dependencies('accepted', 'rejected')
+
+  await expect(
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
+  ).resolves.toEqual({ sessionId: SESSION, outcome: 'refused', reason: 'Codex could not start.' })
+  expect(deps.awaitSettlement).not.toHaveBeenCalled()
+  expect(deps.note).toHaveBeenCalledExactlyOnceWith(...REFUSED)
+})
+
+it('returns at handover and leaves the provider verdict to be awaited', async () => {
+  const deps = dependencies('accepted')
+
+  const started = await startStructuredAgentSessionContinuation(
+    deps,
+    SESSION,
+    marker(),
+    'operation-1'
+  )
+
+  expect(deps.awaitHandedOver).toHaveBeenCalledOnce()
+  expect(deps.awaitSettlement).not.toHaveBeenCalled()
+  if (!('verdict' in started)) {
+    throw new Error('expected a handed-over continuation')
+  }
+  await expect(started.verdict()).resolves.toEqual({ sessionId: SESSION, outcome: 'continued' })
+  expect(deps.note).toHaveBeenCalledOnce()
+})
+
+it('still awaits the verdict when the handover wait ends unanswered', async () => {
+  const deps = dependencies('unknown', undefined)
+
+  await expect(
+    continueStructuredAgentSessionAfterRestart(deps, SESSION, marker(), 'operation-1')
+  ).resolves.toEqual({ sessionId: SESSION, outcome: 'unknown' })
+  expect(deps.note).toHaveBeenCalledExactlyOnceWith(...UNCONFIRMED)
 })

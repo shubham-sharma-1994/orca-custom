@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { bench, expect } from 'vitest'
+import { test, expect } from 'vitest'
 import * as monaco from 'monaco-editor'
 import { syncContentUpdate, type MonacoContentSyncMode } from './monaco-content-sync'
 
@@ -38,8 +38,11 @@ async function measureUndoRetention(mode: MonacoContentSyncMode): Promise<{
   await forceGcAndSettle()
   const beforeArrayBuffers = process.memoryUsage().arrayBuffers
   const model = monaco.editor.createModel('', 'plaintext')
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: content sync calls only the editor methods stubbed here.
   const editorInstance = {
     getModel: () => model,
+    saveViewState: () => null,
+    restoreViewState: () => {},
     pushUndoStop: () => {
       model.pushStackElement()
       return true
@@ -59,9 +62,8 @@ async function measureUndoRetention(mode: MonacoContentSyncMode): Promise<{
   return { arrayBufferDelta, canUndo, undoBytes }
 }
 
-bench(
-  '50 MiB read-only live-tail undo retention',
-  async () => {
+test('50 MiB read-only live-tail undo retention', async ({ bench }) => {
+  await bench('50 MiB read-only live-tail undo retention', async () => {
     const undoable = await measureUndoRetention('undoable')
     const readOnlyLiveTail = await measureUndoRetention('read-only-live-tail')
     console.log(
@@ -72,7 +74,7 @@ bench(
     expect(undoable.arrayBufferDelta).toBeGreaterThanOrEqual(BATCH_COUNT * BATCH_BYTES)
     expect(readOnlyLiveTail.canUndo).toBe(false)
     expect(readOnlyLiveTail.undoBytes).toBe(0)
-    expect(readOnlyLiveTail.arrayBufferDelta).toBe(0)
-  },
-  { iterations: 1, time: 1, warmupIterations: 0, warmupTime: 0 }
-)
+    // Why a bound, not 0: the process-wide counter also moves with unrelated buffers freed meanwhile.
+    expect(Math.abs(readOnlyLiveTail.arrayBufferDelta)).toBeLessThan(MEBIBYTE)
+  }).run({ iterations: 1, time: 1, warmupIterations: 0, warmupTime: 0 })
+})

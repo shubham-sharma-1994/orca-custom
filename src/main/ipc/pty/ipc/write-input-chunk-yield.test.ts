@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { TERMINAL_INPUT_CHUNK_MAX_BYTES } from '../../../../shared/terminal-input'
+import { TERMINAL_INPUT_CHUNK_MAX_BYTES } from '../../../../shared/terminal/input/terminal-input'
 import { ptyOwnership } from '../provider/ownership-state'
 import { createPtyWriteInput } from './write-input'
 
@@ -42,11 +42,10 @@ function createWriteInput(): ReturnType<typeof createPtyWriteInput>['writePtyInp
 }
 
 beforeEach(() => {
-  ptyOwnership.set(PTY_ID, null)
+  ptyOwnership.set(PTY_ID, 'local')
   provider.write.mockReset()
   mainWindow.webContents.send.mockReset()
-  // Why: only setTimeout is faked. A setTimeout(0) yield would stall the write forever here,
-  // while a setImmediate yield still runs in Node's check phase — the race below is deterministic.
+  // Fake timers make timer-based yields stall while setImmediate still runs, proving check-phase yielding.
   vi.useFakeTimers({ toFake: ['setTimeout'] })
 })
 
@@ -68,7 +67,7 @@ describe('chunked pty write yield', () => {
     }) as typeof setImmediate)
 
     const outcome = await Promise.race([
-      createWriteInput()({ id: PTY_ID, data: THREE_CHUNK_INPUT }),
+      createWriteInput()({ inputKind: 'driving', id: PTY_ID, data: THREE_CHUNK_INPUT }),
       afterImmediateTurns(50)
     ])
 
@@ -88,6 +87,7 @@ describe('chunked pty write yield', () => {
     const immediate = vi.spyOn(globalThis, 'setImmediate')
 
     const outcome = createWriteInput()({
+      inputKind: 'driving',
       id: PTY_ID,
       data: 'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES)
     })

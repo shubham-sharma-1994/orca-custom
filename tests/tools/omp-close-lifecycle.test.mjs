@@ -6,23 +6,23 @@ import { createDaemonPtySubprocessHandle } from '../../src/main/daemon/pty-subpr
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runProcess } from '../../src/shared/child-process/run-process.ts'
+import { runProcess } from '@orca/process-host'
 import {
   captureDescendantSnapshot,
   readProcessTable
-} from '../../src/main/pty-descendant-termination.ts'
+} from '../../src/main/pty/process-retirement/pty-descendant-termination.ts'
 import {
   createPtyPhysicalExit,
   shutdownLocalPty,
   killAllLocalPtys
-} from '../../src/main/providers/local-pty-termination.ts'
+} from '../../src/main/providers/local-pty/local-pty-termination.ts'
 import {
   ptyProcesses,
   ptyAgentSessionIds,
   ptyPhysicalExits,
   ptyExitDisposables,
   clearPtyState
-} from '../../src/main/providers/local-pty-provider-state.ts'
+} from '../../src/main/providers/local-pty/local-pty-provider-state.ts'
 
 const binary = process.env.ORCA_OMP_PROBE_BINARY
 const externalTool = process.env.ORCA_OMP_PROBE_EXTERNAL_TOOL === '1'

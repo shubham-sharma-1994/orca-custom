@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { bench, expect } from 'vitest'
+import { test, expect } from 'vitest'
 import * as monaco from 'monaco-editor'
 import { syncContentUpdate } from './monaco-content-sync'
 
@@ -29,8 +29,11 @@ async function measureReconciliation(
   const replacementSamples: number[] = []
   const measure = (next: string): number => {
     const model = monaco.editor.createModel(initial, 'plaintext')
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: content sync calls only the editor methods stubbed here.
     const editorInstance = {
       getModel: () => model,
+      saveViewState: () => null,
+      restoreViewState: () => {},
       pushUndoStop: () => true
     } as unknown as monaco.editor.IStandaloneCodeEditor
     const startedAt = performance.now()
@@ -72,14 +75,23 @@ async function runReconciliationBenchmark(
   expect(replacementP95 / appendP95).toBeGreaterThanOrEqual(2)
 }
 
-bench(
-  '9 MiB append and replacement p95',
-  () => runReconciliationBenchmark('9 MiB model', 9 * 1024 * 1024, 50),
-  { iterations: 1, time: 1, warmupIterations: 0, warmupTime: 0 }
-)
+test('9 MiB append and replacement p95', async ({ bench }) => {
+  await bench('9 MiB append and replacement p95', () =>
+    runReconciliationBenchmark('9 MiB model', 9 * 1024 * 1024, 50)).run({
+    iterations: 1,
+    time: 1,
+    warmupIterations: 0,
+    warmupTime: 0
+  })
+})
 
-bench(
-  '50 MiB append and replacement p95',
-  () => runReconciliationBenchmark('50 MiB model', 50 * 1024 * 1024, 100),
-  { iterations: 1, time: 1, warmupIterations: 0, warmupTime: 0 }
-)
+test('50 MiB append and replacement p95', async ({ bench }) => {
+  await bench('50 MiB append and replacement p95', () =>
+    runReconciliationBenchmark('50 MiB model', 50 * 1024 * 1024, 100)).run({
+    iterations: 1,
+    time: 1,
+    warmupIterations: 0,
+    warmupTime: 0
+  })
+  // Why: 70 forced-GC'd 50 MiB models outlast the default timeout; the budget is the p95, not the total.
+}, 180_000)

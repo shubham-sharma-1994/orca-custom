@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Repo } from '../../../../shared/repo-types'
 import type { Worktree } from '../../../../shared/worktree/types'
-import type { AiVaultSessionWorktreeInfo } from './ai-vault-session-worktree'
+import type { AiVaultSessionWorktreeInfo } from '../../../../shared/ai-vault/session-display/ai-vault-session-worktree'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import { resolveAiVaultSessionLaunchTarget } from './ai-vault-session-launch-target'
 import {
@@ -55,7 +55,7 @@ function makeTargetState(
     repos: [],
     worktreesByRepo: {},
     ...overrides
-  } as AiVaultSessionResumeTargetState
+  }
 }
 
 function makeFolderTargetState(
@@ -390,7 +390,8 @@ describe('resolveAiVaultSessionResumeActions', () => {
         worktreeInfo: makeWorktreeInfo('active'),
         activeWorktreeId: 'repo-2::/remote/orca',
         worktrees: [
-          makeWorktree(),
+          // A WSL-stored session's own worktree lives in that distro.
+          makeWorktree({ path: '\\\\wsl$\\Ubuntu\\repo\\orca' }),
           makeWorktree({
             id: 'repo-2::/remote/orca',
             repoId: 'repo-2',

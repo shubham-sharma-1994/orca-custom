@@ -1,17 +1,8 @@
 {
+  "goldenFormatVersion": 6,
   "operation": "tasks.task-list-gitlab-items",
   "family": "tasks.task-list-gitlab-items",
   "namedDeltas": [],
-  "runnerVersion": 1,
-  "baseline": "02a55944347346065453e179e071e64d9ae861dc",
-  "lockfileSha256": "9317f3a98ab047f9f96fe26fd8531b8a632ac5954064b322f41a904148cbf6bb",
-  "recorderSha256": "0317fe2aebe4743ce5e7ae194531aa91b4fe0a84df457640851fe6dfdb9362af",
-  "adapterSha256": "07a15e900363faa25bc364f5bc1c330f96798abfeaed35210428c2ac558586b8",
-  "scenarioSha256": "038221907a57f5bb25338f9b07a744dbac3ea0a7ea2ba43281f171912f45a586",
-  "platform": "darwin",
-  "scenarioVersion": 1,
-  "projectionVersion": 2,
-  "goldenFormatVersion": 5,
   "values": {
     "18c09c3772f4": {
       "name": "gitlab.listWorkItems#1",
@@ -552,6 +543,11 @@
         }
       }
     },
+    "ba411b67de4b": {
+      "name": "taskListSettled",
+      "ordinal": 9,
+      "value": true
+    },
     "c0eea71a0827": {
       "name": "error",
       "ordinal": 6,
@@ -639,7 +635,8 @@
             "a2f93be0d571",
             "f1dcb0c02c92",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -659,7 +656,8 @@
             "1f4eeb3dcff1",
             "c0eea71a0827",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -679,7 +677,8 @@
             "1f4eeb3dcff1",
             "c0eea71a0827",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -699,7 +698,8 @@
             "1f4eeb3dcff1",
             "c0eea71a0827",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -719,7 +719,8 @@
             "1f4eeb3dcff1",
             "c0eea71a0827",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -739,7 +740,8 @@
             "1f4eeb3dcff1",
             "c0eea71a0827",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -759,7 +761,8 @@
             "1f4eeb3dcff1",
             "f457139d901b",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -779,7 +782,8 @@
             "1f4eeb3dcff1",
             "f1dcb0c02c92",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -799,7 +803,8 @@
             "1f4eeb3dcff1",
             "5a3a7999f165",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -819,7 +824,8 @@
             "1f4eeb3dcff1",
             "8f4406e0198e",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       },
@@ -839,7 +845,8 @@
             "1f4eeb3dcff1",
             "f1dcb0c02c92",
             "5ac1816a09df",
-            "411aee2eccd9"
+            "411aee2eccd9",
+            "ba411b67de4b"
           ]
         }
       }

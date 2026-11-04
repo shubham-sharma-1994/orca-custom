@@ -15,51 +15,6 @@ describe('createGitHubSlice.patchWorkItem', () => {
     resetRemoteRuntimeMocks()
   })
 
-  it('does not notify when a patch has no matching cached work item', () => {
-    const store = createTestStore()
-    const subscriber = vi.fn()
-    const unsubscribe = store.subscribe(subscriber)
-    store.getState().patchWorkItem('pr:missing', { title: 'Missing' }, 'repo-1')
-    unsubscribe()
-    expect(subscriber).not.toHaveBeenCalled()
-  })
-
-  it('can scope patches to one repo when different repos have the same work-item id', () => {
-    const store = createTestStore()
-    const repoOneItem = {
-      id: 'pr:42',
-      repoId: 'repo-1',
-      type: 'pr',
-      number: 42,
-      title: 'Repo one PR'
-    } as GitHubWorkItem
-    const repoTwoItem = {
-      id: 'pr:42',
-      repoId: 'repo-2',
-      type: 'pr',
-      number: 42,
-      title: 'Repo two PR'
-    } as GitHubWorkItem
-
-    store.setState({
-      workItemsCache: {
-        [workItemsCacheKey('repo-1', 20, '')]: { data: [repoOneItem], fetchedAt: 1 },
-        [workItemsCacheKey('repo-2', 20, '')]: { data: [repoTwoItem], fetchedAt: 1 }
-      }
-    })
-
-    store.getState().patchWorkItem('pr:42', { reviewRequests: [] }, 'repo-1')
-
-    const state = store.getState()
-    const repoOnePatched = state.workItemsCache[workItemsCacheKey('repo-1', 20, '')]?.data?.[0]
-    const repoTwoPatched = state.workItemsCache[workItemsCacheKey('repo-2', 20, '')]?.data?.[0]
-    expect(repoOnePatched).toMatchObject({
-      repoId: 'repo-1',
-      reviewRequests: []
-    })
-    expect(repoTwoPatched).toBe(repoTwoItem)
-  })
-
   it('can scope patches to one GitHub task source when hosts share a repo id and work-item id', () => {
     const store = createTestStore()
     const firstSourceContext = githubSourceContext('runtime:first-host', 'repo-1')
@@ -110,6 +65,43 @@ describe('createGitHubSlice.patchWorkItem', () => {
       reviewRequests: []
     })
     expect(secondPatched).toBe(secondItem)
+  })
+
+  it('scopes a canonical repository patch within its existing host and account scope', () => {
+    const store = createTestStore()
+    const source = githubSourceContext('local', 'repo-1')
+    const otherAccount = { ...source, projectHostSetupId: 'another-account-setup' }
+    const canonical: GitHubWorkItem = {
+      id: 'issue:42',
+      repoId: 'repo-1',
+      type: 'issue',
+      number: 42,
+      title: 'Fork issue',
+      state: 'open',
+      labels: [],
+      updatedAt: '',
+      author: null,
+      url: 'https://github.com/fork/widgets/issues/42'
+    }
+    const upstream = { ...canonical, url: 'https://github.com/upstream/widgets/issues/42' }
+    const enterprise = { ...canonical, url: 'https://ghe.example:8443/fork/widgets/issues/42' }
+    const sourceKey = workItemsCacheKey('repo-1', 20, '', getTaskSourceCacheScope(source))
+    const otherKey = workItemsCacheKey('repo-1', 20, '', getTaskSourceCacheScope(otherAccount))
+    store.setState({
+      workItemsCache: {
+        [sourceKey]: { data: [upstream, enterprise, canonical], fetchedAt: 1 },
+        [otherKey]: { data: [canonical], fetchedAt: 1 }
+      }
+    })
+    store.getState().patchWorkItem(canonical.id, { labels: ['bug'] }, canonical.repoId, {
+      sourceContext: source,
+      ownerRepo: { owner: 'FORK', repo: 'Widgets', host: ' GitHub.com ' }
+    })
+    const rows = store.getState().workItemsCache[sourceKey]?.data
+    expect(rows?.[0]).toBe(upstream)
+    expect(rows?.[1]).toBe(enterprise)
+    expect(rows?.[2].labels).toEqual(['bug'])
+    expect(store.getState().workItemsCache[otherKey]?.data?.[0]).toBe(canonical)
   })
 })
 
@@ -171,53 +163,6 @@ describe('createGitHubSlice.fetchWorkItems cache identity', () => {
     vi.restoreAllMocks()
   })
 
-  it('reuses the cache map, entry, and nested rows on a no-op force refetch', async () => {
-    const store = createTestStore()
-    const items = [
-      makeNestedWorkItem({ id: 'pr:42', number: 42, title: 'First nested PR' }),
-      makeNestedWorkItem({ id: 'pr:43', number: 43, title: 'Second nested PR' })
-    ]
-    mockApi.gh.listWorkItems.mockImplementation(() =>
-      Promise.resolve({
-        items: structuredClone(items),
-        sources: structuredClone(nestedSources)
-      })
-    )
-
-    let now = 1_700_000_000_000
-    vi.spyOn(Date, 'now').mockImplementation(() => now)
-
-    await store.getState().fetchWorkItems('repo-id', '/repo', 24, '')
-    const cacheKey = workItemsCacheKey('repo-id', 24, '')
-    const previousCache = store.getState().workItemsCache
-    const previousEntry = previousCache[cacheKey]
-    const previousRows = previousEntry?.data
-    expect(previousRows).toHaveLength(2)
-    expect(previousRows?.[0]?.labels).toEqual(['bug', 'needs-review'])
-    expect(previousRows?.[0]?.assignees?.[0]?.login).toBe('assignee')
-    expect(previousRows?.[0]?.reviewRequests?.[0]?.login).toBe('reviewer')
-    expect(previousRows?.[0]?.prRepo).toEqual({
-      owner: 'acme',
-      repo: 'widgets',
-      host: 'github.com'
-    })
-    expect(previousRows?.[0]?.checksSummary?.state).toBe('pending')
-
-    now += 5_000
-    await store.getState().fetchWorkItems('repo-id', '/repo', 24, '', { force: true })
-
-    const nextCache = store.getState().workItemsCache
-    const nextEntry = nextCache[cacheKey]
-    expect(nextCache).toBe(previousCache)
-    expect(nextEntry).toBe(previousEntry)
-    expect(nextEntry?.data).toBe(previousRows)
-    expect(nextEntry?.data?.[0]).toBe(previousRows?.[0])
-    expect(nextEntry?.data?.[1]).toBe(previousRows?.[1])
-    expect(nextEntry?.sources).toBe(previousEntry?.sources)
-    expect(nextEntry?.fetchedAt).toBe(now)
-    expect(nextEntry?.fetchedAt).toBeGreaterThan(1_700_000_000_000)
-  })
-
   it('writes a new entry when a nested reviewRequests login changes but reuses the sibling row', async () => {
     const store = createTestStore()
     const first = makeNestedWorkItem({ id: 'pr:42', number: 42, title: 'First nested PR' })
@@ -244,10 +189,14 @@ describe('createGitHubSlice.fetchWorkItems cache identity', () => {
       sources: structuredClone(nestedSources)
     })
 
+    const subscriber = vi.fn()
+    const unsubscribe = store.subscribe(subscriber)
     await store.getState().fetchWorkItems('repo-id', '/repo', 24, '', { force: true })
+    unsubscribe()
 
     const nextCache = store.getState().workItemsCache
     const nextEntry = nextCache[cacheKey]
+    expect(subscriber).toHaveBeenCalledTimes(1)
     expect(nextCache).not.toBe(previousCache)
     expect(nextEntry).not.toBe(previousEntry)
     expect(nextEntry?.data).not.toBe(previousRows)

@@ -1,4 +1,5 @@
 import type React from 'react'
+import { refreshRuntimeEnvironmentCatalog } from '@/runtime/runtime-environment-pairing-refresh'
 import {
   ArchiveRestore,
   ChevronRight,
@@ -27,9 +28,13 @@ import {
   type AiVaultAgent,
   type AiVaultGroup,
   type AiVaultScope
-} from '../../../../shared/ai-vault-types'
+} from '../../../../shared/ai-vault/contracts/ai-vault-types'
 import { getExecutionHostLabel, type ExecutionHostScope } from '../../../../shared/execution-host'
-import { agentLabel, type AiVaultSessionGroup } from './ai-vault-session-filters'
+import './ai-vault-session-filters'
+import {
+  agentLabel,
+  type AiVaultSessionGroup
+} from '../../../../shared/ai-vault/session-display/ai-vault-session-filters'
 import { translate } from '@/i18n/i18n'
 import type { AiVaultHostScopeOption } from './ai-vault-host-scope'
 import { AiVaultSessionLimitMenu } from './AiVaultSessionLimitMenu'
@@ -134,18 +139,20 @@ export function VaultScopeSwitch({
         value="workspace"
         disabled={!workspaceAvailable}
         className={VAULT_SCOPE_TOGGLE_ITEM_CLASS}
+        title={workspaceLabel}
       >
-        {workspaceLabel}
+        <span className="min-w-0 truncate">{workspaceLabel}</span>
       </ToggleGroupItem>
       <ToggleGroupItem
         value="project"
         disabled={!projectAvailable}
         className={VAULT_SCOPE_TOGGLE_ITEM_CLASS}
+        title={projectLabel}
       >
-        {projectLabel}
+        <span className="min-w-0 truncate">{projectLabel}</span>
       </ToggleGroupItem>
-      <ToggleGroupItem value="all" className={VAULT_SCOPE_TOGGLE_ITEM_CLASS}>
-        {allLabel}
+      <ToggleGroupItem value="all" className={VAULT_SCOPE_TOGGLE_ITEM_CLASS} title={allLabel}>
+        <span className="min-w-0 truncate">{allLabel}</span>
       </ToggleGroupItem>
     </ToggleGroup>
   )
@@ -164,7 +171,14 @@ export function VaultHostScopeMenu({
   const label = selectedOption?.label ?? getExecutionHostLabel(executionHostScope)
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        // A fresh profile has no saved-server file to watch until the first CLI add creates it.
+        if (open) {
+          void refreshRuntimeEnvironmentCatalog()
+        }
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -264,12 +278,11 @@ export function VaultViewMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={6} className="w-56">
-        {/* Why: Select all / Clear lets users isolate one agent without unchecking 15 boxes. */}
         <div className="flex items-center justify-between px-2 py-1">
           <span className="text-[11px] font-semibold text-muted-foreground">
             {translate('auto.components.right.sidebar.AiVaultPanelControls.agents', 'Agents')}
           </span>
-          {/* Why: real menu items so arrow keys reach them; plain buttons are skipped by Radix roving focus. */}
+          {/* Use menu items so Radix arrow navigation can reach Select all/Clear. */}
           <div className="flex items-center gap-1">
             <DropdownMenuItem
               disabled={allAgentsSelected}

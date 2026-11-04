@@ -1,32 +1,44 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  writeSecureJsonFile,
-  hardenExistingSecureFile,
-  isUnreadableError
-} from '../../shared/secure-file'
+import { isUnreadableError } from '../../shared/secure-file'
+import { AtomicSnapshotWriter } from '../persistence/atomic-snapshot-writer'
 import type { MobileNotificationEvent } from './runtime-mobile-notification-controller'
+import type { ExecutionHostId } from '../../shared/execution-host'
+import type { DeliveredNotificationIdentity } from '../../shared/mobile-notification-identity'
+import {
+  isStructuredAttentionOrigin,
+  type StructuredAttentionOrigin
+} from '../../shared/agent-session/agent-session-attention'
 
-export type DeliveredNotificationIdentity = {
-  notificationId: string
-  notificationEpoch: string
-  notificationSeq: number
+export type DeliveredNotificationRecord = DeliveredNotificationIdentity & {
+  structuredOrigin?: StructuredAttentionOrigin
+  worktreeId?: string
+  paneKey?: string
+  workspaceExecutionHostId?: ExecutionHostId | null
+  executionHost?: `runtime:${string}`
 }
-type RecordEntry = DeliveredNotificationIdentity & { dismissedThrough: number; expiresAt: number }
+type RecordEntry = DeliveredNotificationRecord & { dismissedThrough: number; expiresAt: number }
 const LIMIT = 4096
 const RETENTION_MS = 7 * 86400_000
+
+function warnPersistFailed(error: unknown): void {
+  console.warn('[notifications] Could not persist dismissal recovery state', error)
+}
 
 export class MobileNotificationDismissalStore {
   private readonly path: string
   private entries: RecordEntry[] = []
   private unreadable = false
+  private closed = false
+  // Notification ids need no secure writer; its synchronous Windows icacls froze windows per alert (STA-9692).
+  private readonly writer: AtomicSnapshotWriter
   constructor(userDataPath: string) {
     this.path = join(userDataPath, 'mobile-notification-dismissals.json')
+    this.writer = new AtomicSnapshotWriter(() => this.path, { fileMode: 0o600 })
     try {
-      hardenExistingSecureFile(this.path)
       const value: unknown = JSON.parse(readFileSync(this.path, 'utf8'))
       if (Array.isArray(value)) {
-        this.entries = value.filter(isEntry).slice(-LIMIT)
+        this.entries = value.flatMap(readEntry).slice(-LIMIT)
       }
     } catch (error) {
       this.unreadable = isUnreadableError(error)
@@ -46,13 +58,32 @@ export class MobileNotificationDismissalStore {
       entry.notificationId === event.notificationId &&
       entry.notificationEpoch === event.notificationEpoch
     let next: RecordEntry[]
-    if (event.type === 'notification') {
+    if (event.type === 'dismiss' && event.dismissedDelivery) {
+      const target = event.dismissedDelivery
+      next = kept.map((entry) =>
+        entry.notificationId === target.notificationId &&
+        entry.notificationEpoch === target.notificationEpoch
+          ? {
+              ...entry,
+              dismissedThrough: Math.max(entry.dismissedThrough, target.notificationSeq),
+              expiresAt: now + RETENTION_MS
+            }
+          : entry
+      )
+    } else if (event.type === 'notification') {
       next = [
         ...kept.filter((entry) => !same(entry)),
         {
           notificationId: event.notificationId,
           notificationEpoch: event.notificationEpoch,
           notificationSeq: event.notificationSeq,
+          ...(event.workspaceExecutionHostId !== undefined
+            ? { workspaceExecutionHostId: event.workspaceExecutionHostId }
+            : {}),
+          ...(event.worktreeId ? { worktreeId: event.worktreeId } : {}),
+          ...(event.paneKey ? { paneKey: event.paneKey } : {}),
+          ...(event.executionHost ? { executionHost: event.executionHost } : {}),
+          ...(event.structuredOrigin ? { structuredOrigin: event.structuredOrigin } : {}),
           dismissedThrough: kept.find(same)?.dismissedThrough ?? -1,
           expiresAt: now + RETENTION_MS
         }
@@ -74,10 +105,67 @@ export class MobileNotificationDismissalStore {
       })
     }
     next = next.slice(-LIMIT)
-    if (!this.unreadable) {
-      writeSecureJsonFile(this.path, next)
-    }
     this.entries = next
+    if (this.unreadable) {
+      return
+    }
+    const serialize = () => JSON.stringify(this.entries, null, 2)
+    if (this.closed) {
+      // Exit would drop an asynchronous write.
+      try {
+        this.writer.writeSync(serialize)
+      } catch (error) {
+        warnPersistFailed(error)
+      }
+      return
+    }
+    this.writer.write(serialize).catch(warnPersistFailed)
+  }
+
+  flush(): Promise<void> {
+    return this.writer.waitForPendingWrite().catch(() => {})
+  }
+
+  /** Committed exits only: subsequent records write synchronously; wait for the pending write. */
+  close(): Promise<void> {
+    this.closed = true
+    return this.flush()
+  }
+
+  /** Unreadable history cannot rule a delivery out. */
+  hasLiveDelivery(notificationId: string): boolean {
+    const now = Date.now()
+    return (
+      this.unreadable ||
+      this.entries.some((entry) => entry.notificationId === notificationId && isLive(entry, now))
+    )
+  }
+
+  liveDeliveries(): DeliveredNotificationRecord[] {
+    const now = Date.now()
+    return this.entries
+      .filter((entry) => isLive(entry, now))
+      .map(
+        ({
+          notificationId,
+          notificationEpoch,
+          notificationSeq,
+          structuredOrigin,
+          workspaceExecutionHostId,
+          worktreeId,
+          paneKey,
+          executionHost
+        }) => ({
+          notificationId,
+          notificationEpoch,
+          notificationSeq,
+          ...(structuredOrigin ? { structuredOrigin } : {}),
+          ...(worktreeId ? { worktreeId } : {}),
+          ...(paneKey ? { paneKey } : {}),
+          ...(workspaceExecutionHostId !== undefined ? { workspaceExecutionHostId } : {}),
+          ...(executionHost ? { executionHost } : {})
+        })
+      )
   }
 
   reconcile(delivered: readonly DeliveredNotificationIdentity[]): DeliveredNotificationIdentity[] {
@@ -95,7 +183,22 @@ export class MobileNotificationDismissalStore {
   }
 }
 
-function isEntry(value: unknown): value is RecordEntry {
+function isLive(entry: RecordEntry, now: number): boolean {
+  return entry.expiresAt > now && entry.dismissedThrough < entry.notificationSeq
+}
+
+/** Keep records with unknown future origin kinds, degrading only their origin to none. */
+function readEntry(value: unknown): RecordEntry[] {
+  if (!isEntry(value)) {
+    return []
+  }
+  const { structuredOrigin, ...entry } = value
+  return [isStructuredAttentionOrigin(structuredOrigin) ? { ...entry, structuredOrigin } : entry]
+}
+
+function isEntry(
+  value: unknown
+): value is Omit<RecordEntry, 'structuredOrigin'> & { structuredOrigin?: unknown } {
   if (!value || typeof value !== 'object') {
     return false
   }

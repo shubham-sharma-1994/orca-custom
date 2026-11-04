@@ -1,8 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { ImeInput } from '@/lib/ime-text-field'
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { LoaderCircle, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
-import type { AiVaultAgent, AiVaultGroup, AiVaultScope } from '../../../../shared/ai-vault-types'
+import type {
+  AiVaultAgent,
+  AiVaultGroup,
+  AiVaultScope
+} from '../../../../shared/ai-vault/contracts/ai-vault-types'
 import type { ExecutionHostScope } from '../../../../shared/execution-host'
 import { VaultHostScopeMenu, VaultScopeSwitch, VaultViewMenu } from './AiVaultPanelControls'
 import type { AiVaultHostScopeOption } from './ai-vault-host-scope'
@@ -25,6 +30,9 @@ type AiVaultPanelHeaderProps = {
   adjustmentCount: number
   /** Bumped by a caller that sent the user here, e.g. Settings; focuses the search box once. */
   focusSearchRequestId?: number
+  headerAction?: ReactNode
+  /** Sees search keys first; a handled key is default-prevented. */
+  onSearchKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void
   onQueryChange: (query: string) => void
   onScopeChange: (scope: AiVaultScope) => void
   onExecutionHostScopeChange: (scope: ExecutionHostScope) => void
@@ -53,6 +61,8 @@ export function AiVaultPanelHeader({
   sessionLimit,
   adjustmentCount,
   focusSearchRequestId = 0,
+  headerAction,
+  onSearchKeyDown,
   onQueryChange,
   onScopeChange,
   onExecutionHostScopeChange,
@@ -125,7 +135,7 @@ export function AiVaultPanelHeader({
               'Refresh Session History'
             )}
             onClick={onRefresh}
-            disabled={loading}
+            disabled={searching && loading}
             aria-busy={loading}
             className="size-6"
           >
@@ -135,6 +145,7 @@ export function AiVaultPanelHeader({
               <RefreshCw className="size-3" />
             )}
           </Button>
+          {headerAction}
         </div>
       </div>
 
@@ -149,7 +160,7 @@ export function AiVaultPanelHeader({
 
       <div className="mt-2 flex h-8 items-center gap-1.5 rounded-md border border-sidebar-border bg-input/50 px-2 focus-within:border-sidebar-ring focus-within:ring-[2px] focus-within:ring-sidebar-ring/30">
         <Search className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
+        <ImeInput
           ref={searchInputRef}
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
@@ -157,13 +168,15 @@ export function AiVaultPanelHeader({
             'auto.components.right.sidebar.AiVaultPanel.searchSessions',
             'Search sessions'
           )}
-          className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground"
           aria-label={translate(
             'auto.components.right.sidebar.AiVaultPanel.searchSessions',
             'Search sessions'
           )}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') {
+            onSearchKeyDown?.(event)
+            // A dialog host clears the search itself before this runs, and prevents its own close.
+            if (event.key === 'Escape' && !event.defaultPrevented) {
               event.stopPropagation()
               onQueryChange('')
             }

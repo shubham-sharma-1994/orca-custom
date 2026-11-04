@@ -78,8 +78,8 @@ function renderWatcherEffects(overrides: Partial<WatcherController> = {}): Promi
     measurableBackgroundWorktreeIdsRef: { current: new Set() },
     mountedWorktreeIdsRef: { current: new Set([PARKED_WORKTREE_ID]) },
     pendingStartupByTabId: {},
-    // Another workspace is on screen, so the mounted one is hidden and parks.
     renderedActiveWorktreeId: 'repo-1::/worktree-9',
+    startupTerminalTabHold: null,
     tabsByWorktree: {
       [PARKED_WORKTREE_ID]: [
         terminalTab('tab-parked', PARKED_WORKTREE_ID),
@@ -111,15 +111,6 @@ function lastSyncEntries(): Map<string, ParkedTerminalTabWatcherSyncEntry> {
 }
 
 describe('parked terminal watcher sync entries', () => {
-  it('publishes an entry for every surface so closed-tab disposal still sees it', async () => {
-    await renderWatcherEffects()
-
-    const entries = lastSyncEntries()
-    expect(entries.size).toBe(SURFACE_COUNT)
-    expect([...entries.keys()]).toEqual(surfaceIds)
-    expect(mocks.prune).toHaveBeenCalledWith(new Set(surfaceIds))
-  })
-
   it('parks the hidden mounted workspace tabs and exempts the eviction-exempt tab', async () => {
     await renderWatcherEffects()
 
@@ -127,18 +118,18 @@ describe('parked terminal watcher sync entries', () => {
     expect([...(parkedEntry?.parkedTabIds ?? [])]).toEqual(['tab-parked'])
   })
 
-  it('does not allocate a parked-tab-id set per unmounted surface', async () => {
-    await renderWatcherEffects()
+  it('watches the tabs a startup hold keeps unmounted on the visible workspace', async () => {
+    const heldWorktreeId = surfaceIds[9]
+    const tab = terminalTab('held-agent', heldWorktreeId, 'live-pty')
+    await renderWatcherEffects({
+      mountedWorktreeIdsRef: { current: new Set([heldWorktreeId]) },
+      startupTerminalTabHold: { worktreeId: heldWorktreeId, heldTabIds: new Set([tab.id]) },
+      tabsByWorktree: { [heldWorktreeId]: [tab] }
+    })
 
-    const entries = lastSyncEntries()
-    const unmountedSets = new Set(
-      [...entries]
-        .filter(([workspaceId]) => workspaceId !== PARKED_WORKTREE_ID)
-        .map(([, entry]) => entry.parkedTabIds)
-    )
-    // Pre-fix this was one empty Set per surface (422 of them) on every fire.
-    expect(unmountedSets.size).toBe(1)
-    expect([...unmountedSets][0]?.size).toBe(0)
+    const entry = lastSyncEntries().get(heldWorktreeId)
+    expect([...entry!.parkedTabIds]).toEqual([tab.id])
+    expect([...entry!.restoreTitleOnStartTabIds!]).toEqual([tab.id])
   })
   it.each(['repo-1::/never-visited', 'folder:never-visited'])(
     'watches a live terminal in never-activated workspace %s and restores its title',

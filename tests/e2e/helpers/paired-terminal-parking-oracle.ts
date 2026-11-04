@@ -1,6 +1,7 @@
 import type { Page } from '@stablyai/playwright-test'
 import type { RuntimeTerminalRead } from '../../../src/shared/runtime-types'
-import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
+import '../../../src/shared/protocol-version'
+import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../src/shared/terminal/runtime-policy/terminal-runtime-capabilities'
 import {
   toHostSessionTabId,
   toWebTerminalSurfaceTabId
@@ -199,9 +200,7 @@ export async function runPairedTerminalParkingOracle(
     expect(after.bufferCells).toBeLessThanOrEqual(baseline.bufferCells * MAX_RETAINED_CELL_FRACTION)
     expect(after.mountedTargetManagers).toBe(1)
     expect(maxLagMs).toBeLessThan(MAX_EVICTION_LAG_MS)
-    if (baseline.heapBytes !== null && after.heapBytes !== null) {
-      expect(after.heapBytes).toBeLessThanOrEqual(baseline.heapBytes + MAX_HEAP_GROWTH_BYTES)
-    }
+    expect(after.heapBytes).toBeLessThanOrEqual(baseline.heapBytes + MAX_HEAP_GROWTH_BYTES)
 
     const evicted = await page.evaluate(
       (tabs) => tabs.find((tab) => !window.__paneManagers?.has(tab.tabId)) ?? null,

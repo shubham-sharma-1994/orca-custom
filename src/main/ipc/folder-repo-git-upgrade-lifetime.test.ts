@@ -1,8 +1,9 @@
+import type * as RepoDetectionModule from '../git/repo-detection'
 import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Repo } from '../../shared/repo-types'
-import type { Store } from '../persistence'
+import type { Store } from '../persistence/loading-store/store'
 
 const fake = vi.hoisted(() => ({
   stat: vi.fn(),
@@ -14,17 +15,31 @@ const fake = vi.hoisted(() => ({
   worktreesChanged: vi.fn(),
   unsubscribe: vi.fn()
 }))
+vi.mock('../git/repo-detection', async (importOriginal) => {
+  const facade = await vi.importMock<typeof RepoDetectionModule>('../git/repo')
+  return {
+    ...(await importOriginal<typeof RepoDetectionModule>()),
+    isGitRepoAsync: facade.isGitRepoAsync,
+    getGitRepoRootAsync: facade.getGitRepoRootAsync
+  }
+})
+
 vi.mock('node:fs/promises', () => ({ stat: fake.stat }))
 vi.mock('node:fs', () => ({ realpathSync: (path: string) => path }))
-vi.mock('../git/repo', () => ({ isGitRepo: fake.git, getGitRepoRoot: fake.root }))
-vi.mock('../worktree-root-preparation', () => ({ prepareLocalWorktreeRootForRepo: fake.prepare }))
-vi.mock('./registered-worktree-roots-cache', () => ({
+vi.mock('../git/repo', () => ({ isGitRepoAsync: fake.git, getGitRepoRootAsync: fake.root }))
+vi.mock('../workspaces/creation/worktree-root-preparation', () => ({
+  prepareLocalWorktreeRootForRepo: fake.prepare
+}))
+vi.mock('./worktrees/removal/registered-worktree-roots-cache', () => ({
   invalidateAuthorizedRootsCache: fake.invalidate
 }))
 vi.mock('./repos/repos-changed-notification', () => ({ notifyReposChanged: fake.reposChanged }))
 vi.mock('./worktree-remote', () => ({ notifyWorktreesChanged: fake.worktreesChanged }))
-vi.mock('./worktree-base-directory-poller', () => ({
-  WORKTREE_BASE_BACKSTOP_TICKS: 15,
+vi.mock('./worktrees/creation/worktree-base-directory-marker-poller', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  WORKTREE_BASE_BACKSTOP_TICKS: 15
+}))
+vi.mock('./worktrees/creation/worktree-base-directory-poller', () => ({
   WORKTREE_BASE_POLL_INTERVAL_MS: 2000,
   createWorktreePollerWindowVisibility: () => ({
     isWindowVisible: () => true,
@@ -57,7 +72,7 @@ function begin(repos = [folder()], meta: ReturnType<Store['getAllWorktreeMeta']>
     getRepos: () => repos,
     getRepo: (id: string) => repos.find((repo) => repo.id === id),
     getAllWorktreeMeta: () => meta,
-    updateRepo: vi.fn((id: string, patch: Partial<Repo>) => {
+    updateRepo: vi.fn(({ id }: Pick<Repo, 'id'>, patch: Partial<Repo>) => {
       const repo = repos.find((row) => row.id === id)
       return repo ? Object.assign(repo, patch) : null
     })
@@ -108,6 +123,32 @@ describe('folder repo upgrade poll lifetime', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it.each(['stopped', 'removed', 'path changed', 'already upgraded'])(
+    'refuses a stale folder upgrade when its owner is %s during Git discovery',
+    async (change) => {
+      const pending = deferred<boolean>()
+      fake.git.mockReturnValue(pending.promise)
+      const repos = [folder()]
+      const { store } = begin(repos)
+      await vi.advanceTimersByTimeAsync(25)
+      expect(fake.git).toHaveBeenCalledTimes(1)
+      if (change === 'stopped') {
+        stopFolderRepoGitUpgradeWatch()
+      } else if (change === 'removed') {
+        repos.splice(0)
+      } else if (change === 'path changed') {
+        repos[0].path = join('mock', 'new-root')
+      } else {
+        repos[0].kind = 'git'
+      }
+      pending.resolve(true)
+      await flush()
+      expect(store.updateRepo).not.toHaveBeenCalled()
+      expect(fake.prepare).not.toHaveBeenCalled()
+      expect(fake.reposChanged).not.toHaveBeenCalled()
+    }
+  )
+
   it('stops the remaining folder scan when a pending marker fails after stop', async () => {
     const pending = deferred<typeof marker>()
     fake.stat.mockReturnValue(pending.promise)
@@ -152,20 +193,6 @@ describe('folder repo upgrade poll lifetime', () => {
     expect(fake.git).toHaveBeenCalledTimes(2)
     expect(fake.reposChanged).not.toHaveBeenCalled()
     expect(fake.invalidate).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps active upgrade preparation, cache invalidation and notifications', async () => {
-    const { store, window } = begin()
-    await vi.advanceTimersByTimeAsync(25)
-    expect(store.updateRepo).toHaveBeenCalledWith(root, {
-      kind: 'git',
-      folderUpgradeGitRootPath: root,
-      externalWorktreeVisibility: 'hide'
-    })
-    expect(fake.prepare).toHaveBeenCalledTimes(1)
-    expect(fake.invalidate).toHaveBeenCalledTimes(1)
-    expect(fake.reposChanged).toHaveBeenCalledWith(window)
-    expect(fake.worktreesChanged).toHaveBeenCalledWith(window, root)
   })
 
   it('retries a missing marker and dedupes stable rejected markers', async () => {

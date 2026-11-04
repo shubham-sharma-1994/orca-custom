@@ -14,7 +14,8 @@ import {
   stubSortableTab,
   stubStatusDisplay,
   stubTabInsertion,
-  stubTabStripDragScroll
+  stubTabStripDragScroll,
+  stubTooltip
 } from './tab-bar-windows-shell-launch-render-stubs'
 import {
   appStoreSnapshot,
@@ -23,6 +24,7 @@ import {
 } from './tab-bar-windows-shell-launch-test-harness'
 
 vi.mock('react', async () => await stubHeadlessReact())
+vi.mock('@/store/plugin-new-files', () => ({ usePluginNewFiles: () => [] }))
 vi.mock('zustand/react/shallow', () => stubShallowSelector())
 vi.mock('lucide-react', async () => (await import('./lucide-icon-stub-fixture')).stubEveryIcon())
 vi.mock('@dnd-kit/sortable', () => stubSortableContext())
@@ -38,6 +40,7 @@ vi.mock('./QuickLaunchButton', () => stubQuickLaunchButton())
 vi.mock('./shell-icons', () => stubShellIcons())
 vi.mock('@/lib/focus-terminal-tab-surface', () => stubFocusTerminalTabSurface())
 vi.mock('@/components/ui/dropdown-menu', () => stubDropdownMenu())
+vi.mock('@/components/ui/tooltip', () => stubTooltip())
 
 describe('TabBar PowerShell launch wiring', () => {
   beforeEach(() => {
@@ -65,6 +68,9 @@ describe('TabBar PowerShell launch wiring', () => {
       hostPlatform: 'win32'
     })
     vi.stubGlobal('window', {
+      // The setup prompt's image cache listens for window focus at load.
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       api: {
         preflight: {
           detectRemoteWindowsTerminalCapabilities
@@ -136,6 +142,9 @@ describe('TabBar PowerShell launch wiring', () => {
       hostPlatform: 'linux'
     })
     vi.stubGlobal('window', {
+      // The setup prompt's image cache listens for window focus at load.
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       api: {
         preflight: {
           detectRemoteWindowsTerminalCapabilities

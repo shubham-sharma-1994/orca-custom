@@ -1,3 +1,5 @@
+import * as gitExecFile from '../git/command-runner/git-exec-file'
+import { CrewChanges } from './orchestration/crew/crew-changes'
 import { withDurableRuntimeStore } from './runtime-durable-store-fixture'
 import * as mocks from './orca-runtime-test-mocks.spec'
 import type { Mock } from 'vitest'
@@ -5,7 +7,7 @@ import type { Mock } from 'vitest'
 const { HEADLESS_RUNTIME_WINDOW_ID, OrcaRuntimeService, electronMocks } = mocks
 const { getBrowserHostLeaseRegistry, getDefaultWorkspaceSession, getRuntimeBrowserPageRegistry } =
   mocks
-const { gitRunner, vi } = mocks
+const { vi } = mocks
 
 import * as fixtures from './orca-runtime-test-fixtures.spec'
 
@@ -16,11 +18,11 @@ const { TEST_WORKTREE_PATH, makeHeadlessTerminalLayout, makeRuntimeStoreWithWork
 const { makeWorkspaceSessionWithHeadlessTerminal, store } = fixtures
 
 import type {
-  BrowserClientHostCommandEvent,
   RuntimeBrowserClientPlacement,
-  TerminalSideEffectBatch,
   WorkspaceSessionState
 } from './orca-runtime-test-mocks.spec'
+import type { BrowserClientHostCommandEvent } from '../../shared/browser/client-hosting/browser-client-host-protocol'
+import type { TerminalSideEffectBatch } from '../../shared/terminal/output/terminal-side-effect-facts'
 import type { OrchestrationDb } from './orchestration/db'
 
 type RuntimeService = InstanceType<typeof OrcaRuntimeService>
@@ -35,9 +37,8 @@ type MobileCreateTestNotifier = {
   revealTerminalSession: TestMock
   splitTerminal: TestMock
   renameTerminal: TestMock
-  closeTerminal: (tabId: string, paneRuntimeId?: number) => void
+  closeTerminal: (tabId: string, leafId?: string) => void
   closeSessionTab: TestMock
-  sleepWorktree: TestMock
   terminalFitOverrideChanged: TestMock
   terminalDriverChanged: TestMock
 }
@@ -125,9 +126,7 @@ async function publishClientHostedPage(
   return placement
 }
 
-// Why (#10333): `orca serve` publishes a ready graph under
-// HEADLESS_RUNTIME_WINDOW_ID with no BrowserWindow behind it, so every
-// focus-requested create used to fall through to getAuthoritativeWindow().
+// #10333: serve publishes a ready graph without BrowserWindow; focus-requested creates must stay headless.
 const wireHeadlessServeRuntime = (): RuntimeService => {
   const runtime = new OrcaRuntimeService(store)
   electronMocks.BrowserWindow.fromId.mockReturnValue(null as never)
@@ -216,8 +215,13 @@ function makePostRevealWorkerRecoveryHarness(
     undefined,
     { canRecoverPersistentLocalPtys: () => true }
   )
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: This recovery fixture reaches only the listed planner, terminal settlement and authority lookup methods.
   runtime.setOrchestrationDb({
+    crewChanges: new CrewChanges(),
+    listSessionDispatchesForPresentation: () => [],
+    reconcileMissingWorkerTerminal: vi.fn(),
     getActiveDispatchForTerminal: () => undefined,
+    findActiveRemoteAttachmentForPane: () => undefined,
     listLegacyWorkerTerminalRecoveryRows: () => [
       {
         dispatch_id: 'dispatch-post-reveal',
@@ -325,9 +329,8 @@ function makePendingAgentTabActivationRuntime(opts: { disabledTuiAgents?: string
   return { runtime, spawn }
 }
 
-// Why: the five #7587 mobile-create tests share one notifier factory so interface changes live in one place.
 function createMobileCreateTestNotifier(
-  closeTerminal: (tabId: string, paneRuntimeId?: number) => void
+  closeTerminal: (tabId: string, leafId?: string) => void
 ): MobileCreateTestNotifier {
   return {
     focusTerminal: vi.fn(),
@@ -340,20 +343,23 @@ function createMobileCreateTestNotifier(
     renameTerminal: vi.fn(),
     closeTerminal,
     closeSessionTab: vi.fn(),
-    sleepWorktree: vi.fn(),
     terminalFitOverrideChanged: vi.fn(),
     terminalDriverChanged: vi.fn()
   }
 }
 
-function createWorktreeRemovalRuntime(runtimeStore: unknown = store): RuntimeService {
+function createWorktreeRemovalRuntime(
+  runtimeStore: unknown = store,
+  deps: ConstructorParameters<typeof OrcaRuntimeService>[2] = {}
+): RuntimeService {
   const emptyPtyProvider = {
     listProcesses: vi.fn(async () => []),
     shutdown: vi.fn(async () => {})
   }
   return new OrcaRuntimeService(runtimeStore as never, undefined, {
-    getLocalProvider: () => emptyPtyProvider as never,
-    getSshProvider: () => emptyPtyProvider as never
+    ...deps,
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: removal sweeps call only listProcesses and shutdown.
+    getLocalProvider: () => emptyPtyProvider as never
   })
 }
 
@@ -384,7 +390,7 @@ function mockReconcileGit(options: {
 }) {
   const { postFetchSha = 'new-base-sha', ancestor = true, baseRefMissing = false } = options
 
-  return vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args, options) => {
+  return vi.spyOn(gitExecFile, 'gitExecFileAsync').mockImplementation(async (args, options) => {
     const command = args as string[]
     const cwd = (options as { cwd?: string } | undefined)?.cwd
     if (
@@ -437,13 +443,16 @@ async function reconcileWithToken(runtime: RuntimeService, token: string): Promi
     fetchPromise: Promise.resolve({ ok: true })
   })
 }
-function createSideEffectRuntime(): {
+function createSideEffectRuntime(
+  checkHookAgentPresence?: (paneKey: string) => Promise<'live' | 'unverifiable' | 'exited' | null>
+): {
   runtime: RuntimeService
   batches: TerminalSideEffectBatch[]
 } {
   const batches: TerminalSideEffectBatch[] = []
   const runtime = new OrcaRuntimeService(store, undefined, {
-    onTerminalSideEffects: (batch) => batches.push(batch)
+    onTerminalSideEffects: (batch) => batches.push(batch),
+    checkHookAgentPresence
   })
   return { runtime, batches }
 }

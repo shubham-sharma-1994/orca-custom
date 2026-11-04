@@ -1,5 +1,5 @@
 import { build } from 'esbuild'
-import type * as WorkerEntryPath from '../../worker-thread-entry-path'
+import type * as WorkerEntryPath from '../../worker-threads/worker-thread-entry-path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,7 +13,7 @@ import {
 import { openProfileStateDatabase, profileStateDatabaseFile } from './profile-state-database'
 
 const bundle = vi.hoisted(() => ({ directory: '' }))
-vi.mock('../../worker-thread-entry-path', async (importOriginal) => {
+vi.mock('../../worker-threads/worker-thread-entry-path', async (importOriginal) => {
   const original = await importOriginal<typeof WorkerEntryPath>()
   return {
     ...original,
@@ -65,7 +65,7 @@ vi.mock('../../telemetry/client', () => ({ track: () => {} }))
 vi.mock('../../telemetry/cohort-classifier', () => ({
   getCohortAtEmit: () => ({ nth_repo_added: 2 })
 }))
-vi.mock('../../ssh/ssh-config-parser', () => ({
+vi.mock('../../ssh/config/ssh-config-parser', () => ({
   loadUserSshConfig: () => ({ hosts: [] }),
   sshConfigHostsToTargets: () => []
 }))
@@ -134,7 +134,7 @@ describe('profile-state startup authority boundary', () => {
   it('rejects direct orcad startup on an incapable runtime', async () => {
     const original = process.getBuiltinModule
     vi.spyOn(process, 'getBuiltinModule').mockImplementation((id) => {
-      if (id === 'node:sqlite' || id === 'bun:sqlite') {
+      if (id === 'node:sqlite') {
         return undefined
       }
       return original(id)
@@ -247,12 +247,9 @@ describe('profile-state startup authority boundary', () => {
 
   it('refuses a runtime with SQLite but no native backup', async () => {
     const original = process.getBuiltinModule
-    vi.spyOn(process, 'getBuiltinModule').mockImplementation((id) => {
-      if (id === 'bun:sqlite') {
-        return undefined
-      }
-      return id === 'node:sqlite' ? { DatabaseSync: class {} } : original(id)
-    })
+    vi.spyOn(process, 'getBuiltinModule').mockImplementation((id) =>
+      id === 'node:sqlite' ? { DatabaseSync: class {} } : original(id)
+    )
     await expect(
       createProfileStateStoreForStartup({
         dataFile: join(tmpdir(), 'missing-backup-orca-data.json'),
@@ -273,7 +270,7 @@ describe('profile-state startup authority boundary', () => {
     writeFileSync(dataFile, source)
     const original = process.getBuiltinModule
     vi.spyOn(process, 'getBuiltinModule').mockImplementation((id) =>
-      id === 'node:sqlite' || id === 'bun:sqlite' ? undefined : original(id)
+      id === 'node:sqlite' ? undefined : original(id)
     )
 
     await expect(

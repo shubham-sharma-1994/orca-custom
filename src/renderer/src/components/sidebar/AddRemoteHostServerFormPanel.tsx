@@ -1,7 +1,7 @@
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
-import type { ParseHostAccessLinkResult } from '../../../../shared/remote-pairing-address'
+import type { ParseHostAccessLinkResult } from '../../../../shared/remote-runtime/pairing/remote-pairing-address'
 import { RemoteServerFields } from './AddRemoteHostFields'
 
 export function AddRemoteHostServerFormPanel({
@@ -57,6 +57,13 @@ export function AddRemoteHostServerFormPanel({
         onAllowLoopbackChange={onAllowLoopbackChange}
         onSubmit={onSubmit}
       />
+
+      <p className="text-xs text-muted-foreground">
+        {translate(
+          'auto.components.sidebar.AddRemoteHostDialog.serverRunsAsYou',
+          'This device will be able to run commands as you on this server.'
+        )}
+      </p>
 
       <DialogFooter className="sm:justify-between">
         <span />

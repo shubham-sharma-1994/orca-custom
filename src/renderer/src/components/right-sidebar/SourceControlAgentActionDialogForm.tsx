@@ -1,14 +1,12 @@
-import React from 'react'
+import type { AgentPickerEntry } from '../../../../shared/agent-launch/picker/agent-launch-picker'
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import {
-  CheckCircle2,
-  Info,
-  RefreshCw,
-  RotateCcw,
-  Settings,
-  Sparkles,
-  TriangleAlert
-} from 'lucide-react'
-import AgentCombobox from '@/components/agent/AgentCombobox'
+  canonicalSourceControlActionSelection,
+  type SelectedSourceControlActionRecipe
+} from '../../../../shared/source-control/ai/recipes/source-control-action-selection'
+import { Info, RefreshCw, RotateCcw, Settings, Sparkles, TriangleAlert } from 'lucide-react'
+import { AgentLaunchPicker } from '@/components/agent/AgentLaunchPicker'
+import { sourceControlPickerDraft } from '../../lib/source-control-agent-launch-picker'
 import { Button } from '@/components/ui/button'
 import { DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
@@ -21,20 +19,22 @@ import {
 } from '@/components/ui/select'
 import type { AgentCatalogEntry } from '@/lib/agent-catalog'
 import { cn } from '@/lib/utils'
-import type { SourceControlLaunchActionId } from '../../../../shared/source-control-ai-actions'
-import type { SourceControlAiWriteTarget } from '../../../../shared/source-control-ai-recipe-save'
+import type { SourceControlLaunchActionId } from '../../../../shared/source-control/ai/recipes/source-control-ai-actions'
+import type { SourceControlAiWriteTarget } from '../../../../shared/source-control/ai/settings/source-control-ai-recipe-save'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type { Repo } from '../../../../shared/repo-types'
-import type { TuiAgent } from '../../../../shared/tui-agent'
-import { SourceControlAgentCliArgsField } from './SourceControlAgentCliArgsField'
+import type { TuiAgent } from '../../../../shared/agent-launch/catalog/tui-agent'
 import { SourceControlActionVariableChips } from '../source-control/SourceControlActionVariableChips'
-import { sourceControlActionRecipeMatchesTarget } from './source-control-action-recipe-match'
-import type { SourceControlAgentScopeNote } from './source-control-agent-action-dialog-result'
+import { sourceControlActionRecipeSaveMatchesTarget } from './source-control-action-recipe-match'
+import type {
+  SourceControlAgentScopeNote,
+  UseSourceControlAgentActionDialogResult
+} from './source-control-agent-action-dialog-result'
 import { translate } from '@/i18n/i18n'
 
+/** Expose only delivery errors the user can fix before launch. */
 export type SourceControlAgentActionDeliveryPlanState =
   | { status: 'idle' }
-  | { status: 'success'; summary: string; commandLabel: string; caveat: string }
   | { status: 'error'; error: string }
 
 type SourceControlAgentActionDialogFormProps = {
@@ -45,10 +45,12 @@ type SourceControlAgentActionDialogFormProps = {
   selectedAgent: TuiAgent | null
   hasEnabledAgents: boolean
   detecting: boolean
+  surfaceRows: UseSourceControlAgentActionDialogResult['surfaceRows']
   statusCopy: string | null
   agentArgs: string
   /** False when the launch would be structured native chat; the field is then absent, not disabled. */
   agentArgsApply: boolean
+  recipe: SelectedSourceControlActionRecipe
   commandTemplate: string
   savedCommandInputTemplate?: string | null
   saveLaunchRecipe: boolean
@@ -59,9 +61,10 @@ type SourceControlAgentActionDialogFormProps = {
   canSaveAgentDefault: boolean
   deliveryPlan: SourceControlAgentActionDeliveryPlanState
   canStart: boolean
+  isCreateAccepted?: boolean
   isStarting: boolean
   startLabel: string
-  onSelectedAgentChange: (agent: TuiAgent | null) => void
+  onAgentPick: UseSourceControlAgentActionDialogResult['onAgentPick']
   onAgentArgsChange: (value: string) => void
   onCommandTemplateChange: (value: string) => void
   onSaveLaunchRecipeChange: (value: boolean) => void
@@ -88,13 +91,12 @@ export function SourceControlAgentActionDialogForm({
   actionId,
   baseCommandInput,
   agentScopeNote,
-  agentOptions,
   selectedAgent,
   hasEnabledAgents,
   detecting,
+  surfaceRows,
   statusCopy,
-  agentArgs,
-  agentArgsApply,
+  recipe,
   commandTemplate,
   savedCommandInputTemplate,
   saveLaunchRecipe,
@@ -105,10 +107,10 @@ export function SourceControlAgentActionDialogForm({
   canSaveAgentDefault,
   deliveryPlan,
   canStart,
+  isCreateAccepted = false,
   isStarting,
   startLabel,
-  onSelectedAgentChange,
-  onAgentArgsChange,
+  onAgentPick,
   onCommandTemplateChange,
   onSaveLaunchRecipeChange,
   onSaveAgentDefaultChange,
@@ -118,20 +120,13 @@ export function SourceControlAgentActionDialogForm({
 }: SourceControlAgentActionDialogFormProps): React.JSX.Element {
   const defaultCommandTemplate = savedCommandInputTemplate ?? '{basePrompt}'
   const commandTemplateIncludesBasePrompt = commandTemplate.includes('{basePrompt}')
-  const selectedRecipe = selectedAgent
-    ? {
-        agentId: selectedAgent,
-        commandInputTemplate: commandTemplate,
-        agentArgs
-      }
-    : null
+  const selectedRecipe = recipe
   const selectedSaveTarget = sourceControlLaunchSaveTargetFromValue(saveTargetValue, repo)
-  // Why: start/save only writes the selected target, so the dialog copy must not
-  // depend on whether other available targets also match.
+  // Copy describes only the selected save target, which is the only one start/save writes.
   const selectedLaunchRecipeAlreadySaved = Boolean(
     selectedRecipe &&
     selectedSaveTarget &&
-    sourceControlActionRecipeMatchesTarget({
+    sourceControlActionRecipeSaveMatchesTarget({
       actionId,
       target: selectedSaveTarget,
       recipe: selectedRecipe,
@@ -149,6 +144,38 @@ export function SourceControlAgentActionDialogForm({
         )
       : startLabel
 
+  const currentPick = useRef(onAgentPick)
+  useLayoutEffect(() => {
+    currentPick.current = onAgentPick
+  }, [onAgentPick])
+  const onPickerPick = useCallback<
+    NonNullable<React.ComponentProps<typeof AgentLaunchPicker>['onPick']>
+  >((agent, draft, entry, surface) => currentPick.current(agent, surface, draft, entry), [])
+  const selectedSetup = surfaceRows.launchSelection ?? canonicalSourceControlActionSelection(recipe)
+  const {
+    agentId,
+    agentArgs: sourceArgs,
+    argumentChoices,
+    surface: sourceSurface
+  } = selectedSetup.current
+  const source = selectedSetup.source
+  const setupSelection = useMemo(
+    () => ({
+      current: { agentId, agentArgs: sourceArgs, argumentChoices, surface: sourceSurface },
+      source
+    }),
+    [agentId, sourceArgs, argumentChoices, sourceSurface, source]
+  )
+  const draftForEntry = useCallback(
+    (entry: AgentPickerEntry) =>
+      sourceControlPickerDraft(
+        setupSelection,
+        entry,
+        (selectedAgent === entry.agent ? surfaceRows.surface : undefined) ?? entry.defaultSurface,
+        selectedAgent
+      ),
+    [setupSelection, surfaceRows.surface, selectedAgent]
+  )
   return (
     <div className="flex min-h-0 flex-col gap-4">
       <div className="min-h-0 min-w-0 max-h-[min(60vh,31rem)] space-y-4 overflow-y-auto pr-1 scrollbar-sleek">
@@ -160,12 +187,14 @@ export function SourceControlAgentActionDialogForm({
             )}
           </Label>
           {hasEnabledAgents || selectedAgent ? (
-            <AgentCombobox
-              agents={agentOptions}
-              value={selectedAgent}
-              onValueChange={onSelectedAgentChange}
-              allowNarrowTrigger
-              triggerClassName="w-full"
+            <AgentLaunchPicker
+              model={surfaceRows.model}
+              worktreeId={surfaceRows.worktreeId}
+              agent={selectedAgent}
+              cli={surfaceRows.selection.cli}
+              disabled={!surfaceRows.selection.ready || isStarting}
+              draftForEntry={draftForEntry}
+              onPick={onPickerPick}
             />
           ) : (
             <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -198,12 +227,6 @@ export function SourceControlAgentActionDialogForm({
             </p>
           ) : null}
         </div>
-
-        <SourceControlAgentCliArgsField
-          applies={agentArgsApply}
-          value={agentArgs}
-          onChange={onAgentArgsChange}
-        />
 
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-3">
@@ -240,7 +263,7 @@ export function SourceControlAgentActionDialogForm({
             rows={7}
             value={commandTemplate}
             onChange={(event) => onCommandTemplateChange(event.target.value)}
-            className="box-border min-h-[6.5rem] min-w-0 w-full max-w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+            className="box-border min-h-[6.5rem] min-w-0 w-full max-w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
             spellCheck={false}
           />
           <SourceControlActionVariableChips
@@ -345,42 +368,24 @@ export function SourceControlAgentActionDialogForm({
           </div>
         ) : null}
 
-        {deliveryPlan.status !== 'idle' ? (
-          <div
-            className={cn(
-              'rounded-md border px-3 py-2 text-xs',
-              deliveryPlan.status === 'error'
-                ? 'border-destructive/30 bg-destructive/5 text-destructive'
-                : 'border-border bg-muted/30 text-muted-foreground'
-            )}
-          >
-            {deliveryPlan.status === 'error' ? (
-              <span className="inline-flex items-start gap-2">
-                <TriangleAlert className="mt-px size-3.5 shrink-0" />
-                {deliveryPlan.error}
-              </span>
-            ) : (
-              <div className="space-y-1.5">
-                <div className="flex items-start gap-2 text-foreground">
-                  <CheckCircle2 className="mt-px size-3.5 shrink-0 text-status-success" />
-                  <span>{deliveryPlan.summary}</span>
-                </div>
-                <div className="truncate font-mono text-[11px]">
-                  {translate(
-                    'auto.components.right.sidebar.SourceControlAgentActionDialogForm.1bc0bdbb5e',
-                    'Launch:'
-                  )}{' '}
-                  {deliveryPlan.commandLabel}
-                </div>
-                <div className="text-[11px]">{deliveryPlan.caveat}</div>
-              </div>
-            )}
+        {deliveryPlan.status === 'error' ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <span className="inline-flex items-start gap-2">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              {deliveryPlan.error}
+            </span>
           </div>
         ) : null}
       </div>
 
       <DialogFooter className="flex-wrap gap-2 sm:justify-end">
-        <Button type="button" variant="secondary" size="sm" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={isCreateAccepted}
+          onClick={onCancel}
+        >
           {translate(
             'auto.components.right.sidebar.SourceControlAgentActionDialogForm.ea4788705e',
             'Cancel'

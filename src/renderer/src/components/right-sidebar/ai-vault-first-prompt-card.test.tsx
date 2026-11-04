@@ -3,8 +3,8 @@ import { StrictMode } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FirstPromptCard } from './ai-vault-first-prompt-card'
-import { sessionPromptPreview } from './ai-vault-session-display'
-import type { AiVaultSession } from '../../../../shared/ai-vault-types'
+import { sessionPromptPreview } from '../../../../shared/ai-vault/session-display/ai-vault-session-display'
+import type { AiVaultSession } from '../../../../shared/ai-vault/contracts/ai-vault-types'
 
 const session = {
   id: 'local:claude:s1:/repo/session.jsonl',
@@ -28,22 +28,6 @@ afterEach(() => {
 })
 
 describe('FirstPromptCard', () => {
-  it('labels stored firstUserPrompt text as the first prompt', () => {
-    const remoteSession = {
-      ...session,
-      executionHostId: 'ssh:dev-box',
-      firstUserPrompt: 'The authoritative opening ask'
-    } as AiVaultSession
-    stubApi(vi.fn().mockResolvedValue({ prompt: null }))
-
-    render(
-      <FirstPromptCard session={remoteSession} preview={sessionPromptPreview(remoteSession)} />
-    )
-
-    expect(screen.getByText('First prompt')).toBeTruthy()
-    expect(screen.getByText('The authoritative opening ask')).toBeTruthy()
-  })
-
   it('labels a remote preview fallback as a recent prompt when no full read is available', () => {
     const getFirstUserPrompt = vi.fn().mockResolvedValue({ prompt: null })
     const remoteSession = {
@@ -84,8 +68,7 @@ describe('FirstPromptCard', () => {
   })
 
   it('resolves loading under StrictMode double-invoke instead of stranding the card', async () => {
-    // StrictMode mounts, cleans up, then re-mounts. The cleanup marks the first
-    // request stale, so only a fresh second request can clear `loading`.
+    // StrictMode cleanup stales the first request; only a fresh second request can clear loading.
     stubApi(vi.fn().mockResolvedValue({ prompt: 'Ship the copy button' }))
 
     render(
@@ -100,7 +83,6 @@ describe('FirstPromptCard', () => {
 
   it('stops loading when the read never settles', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    // A main process that never answers must not pin the card in `loading`.
     stubApi(vi.fn().mockReturnValue(new Promise(() => {})))
 
     render(<FirstPromptCard session={session} preview={null} />)

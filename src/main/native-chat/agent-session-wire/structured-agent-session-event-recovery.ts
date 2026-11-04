@@ -1,18 +1,27 @@
-import {
-  stopAgentSessionProviderRoot,
-  type StructuredAgentSessionLifecycleEvent
-} from './structured-agent-session-adapter'
+import { agentSessionFailureFact } from '../../../shared/agent-session/failures/agent-session-failure'
+import type { StructuredAgentSessionLifecycleEvent } from './structured-agent-session-adapter'
+import { holdUnsentSends } from '../agent-session-journal/journal-unsent-send-hold'
+import { stopAgentSessionProviderRoot } from './structured-agent-session-provider-exit-proof'
 import type {
   StructuredAgentSessionHostDeps,
-  StructuredAgentSessionHostSession
+  StructuredAgentSessionHostSession,
+  StructuredAgentSessionProviderChild,
+  StructuredAgentSessionProviderChildIdentity
 } from './structured-agent-session-host-types'
 import type { StructuredAgentSessionSinkBarrier } from './structured-agent-session-event-sink'
-import type { StructuredAgentSessionHolds } from './structured-agent-session-holds'
-import { settleStructuredAgentSessionProviderStarted } from './structured-agent-session-provider-started'
+import { settleStructuredAgentSessionOptionsReported } from './structured-agent-session-provider-started'
 import {
-  isStructuredAgentSessionRecoveryTicketCurrent,
-  settleUnexpectedStructuredAgentSessionExit
-} from './structured-agent-session-unexpected-exit'
+  endExitedStructuredAgentSessionChildUnderSerialize,
+  settleStructuredAgentSessionChildExit,
+  type StructuredAgentSessionChildExit,
+  type StructuredAgentSessionChildExitContext,
+  type StructuredAgentSessionGenerationEnded
+} from './structured-agent-session-child-exit'
+import type { StructuredAgentSessionHostRuntimeState } from './structured-agent-session-host-runtime-state'
+import {
+  openStructuredAgentSessionProviderChild,
+  type StructuredAgentSessionFailStartingChild
+} from './structured-agent-session-provider-open'
 
 export class StructuredAgentSessionEventRecovery {
   private readonly sinkFailures = new Set<string>()
@@ -23,79 +32,116 @@ export class StructuredAgentSessionEventRecovery {
       store: StructuredAgentSessionHostDeps['store']
       sessions: Map<string, StructuredAgentSessionHostSession>
       flushLifecycle: (sessionId: string) => Promise<StructuredAgentSessionSinkBarrier>
-      publishFence: (sessionId: string, session: StructuredAgentSessionHostSession) => void
       publishStatus?: (sessionId: string) => void
-      hasResumeCapableHolder: (sessionId: string) => boolean
-      restartReleaseGrace: (sessionId: string) => void
+      generationEnded: StructuredAgentSessionGenerationEnded
       serialize: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>
       now: () => number
-      /** The one restart every asker shares; the holds put an unheld child on the idle clock. */
-      ensureProviderChild: StructuredAgentSessionHolds['ensureProviderChild']
-      onBarrierError: (sessionId: string, error: unknown) => void
+      runtimeState: StructuredAgentSessionHostRuntimeState
+      wakeDelivery: (sessionId: string) => Promise<void>
+      failStartingChild: StructuredAgentSessionFailStartingChild
+      trackOpen: <T>(open: Promise<T>) => Promise<T>
     }
   ) {}
 
+  openProviderChild = (
+    sessionId: string,
+    child: StructuredAgentSessionProviderChildIdentity
+  ): void => {
+    void this.context.trackOpen(
+      openStructuredAgentSessionProviderChild(this.context, sessionId, child)
+    )
+  }
+
+  private get exitContext(): StructuredAgentSessionChildExitContext {
+    const { deps, runtimeState } = this.context
+    return {
+      ...this.context,
+      logger: deps.logger,
+      startupAttempts: runtimeState.startupAttempts,
+      startFlights: runtimeState.startFlights,
+      holdUnrunSends: async (sessionId, fence, cause) => {
+        const journal = this.context.sessions.get(sessionId)?.journal
+        if (journal) {
+          await holdUnsentSends(journal, {
+            fence,
+            hold: { cause },
+            unrun: (s) => !finalizingStructuredAgentSessionInput(journal, s.clientMessageId)
+          })
+        }
+      },
+      route: {
+        runtimeState,
+        acknowledgeRelease: (sessionId) => deps.adapter.acknowledgeSessionRelease?.(sessionId)
+      },
+      abortBound: (sessionId) => runtimeState.acquireAborts.abortBound(sessionId)
+    }
+  }
+
+  endExitedChildUnderSerialize = (
+    sessionId: string,
+    child: StructuredAgentSessionProviderChild,
+    exit: StructuredAgentSessionChildExit
+  ): Promise<void> =>
+    endExitedStructuredAgentSessionChildUnderSerialize(this.exitContext, sessionId, child, exit)
+
   recoverAfterSinkFailure(sessionId: string, error: unknown): void {
-    if (this.sinkFailures.has(sessionId)) {
+    const child = this.context.sessions.get(sessionId)?.child
+    const heldAtFailure = new Set(child?.heldSends?.())
+    if (!child || this.sinkFailures.has(sessionId)) {
       return
     }
     this.sinkFailures.add(sessionId)
     void this.context
       .serialize(sessionId, async () => {
-        const session = this.context.sessions.get(sessionId)
         const stop =
           this.context.deps.adapter.forceCloseSession ?? this.context.deps.adapter.closeSession
-        if (!session?.hasProviderChild || !stop) {
-          return null
+        const session = this.context.sessions.get(sessionId)
+        if (!session || session.child !== child) {
+          return
         }
-        const fence = session.fence
-        const acquisitionGeneration = session.acquisitionGeneration
-        const stopped = await stopAgentSessionProviderRoot(() => stop(sessionId))
-        if (!stopped || !acquisitionGeneration) {
-          return null
+        const failure = agentSessionFailureFact('hostFault')
+        const reason = `journal sink failure: ${error instanceof Error ? error.message : String(error)}`
+        child.close = {
+          ...(child.close ?? {
+            cause: 'host-stop',
+            recorded: Promise.resolve(null),
+            requestedAt: session.journal.cursor()
+          }),
+          reason,
+          failure
         }
-        return {
-          type: 'ended',
-          sessionId,
-          reason: `journal sink failure: ${error instanceof Error ? error.message : String(error)}`,
-          cause: 'unexpected-exit',
-          fence,
-          acquisitionGeneration
-        } as const
+        const stopped = stop && (await stopAgentSessionProviderRoot(() => stop(sessionId)))
+        if (!stopped) {
+          return
+        }
+        // End in this step so later close reports cannot misclassify journal-failure shutdown as quiet rest.
+        await this.endExitedChildUnderSerialize(sessionId, child, {
+          expected: false,
+          ...(stopped === 'kill-delivered' ? { deathEvidenceKind: stopped } : {}),
+          heldSends: heldAtFailure,
+          reason,
+          failure
+        })
       })
-      .then((event) => (event ? this.handle(event) : undefined))
-      .catch((recoveryError) => this.context.onBarrierError(sessionId, recoveryError))
+      .catch((error: unknown) =>
+        this.context.deps.logger.warn(
+          'stopping a provider after its journal failed did not finish',
+          {
+            scope: 'sink-failure-recovery',
+            sessionId,
+            error
+          }
+        )
+      )
       .finally(() => this.sinkFailures.delete(sessionId))
   }
 
+  /** Settle/report exits without automatic restart; next-send delivery owns queued work and startup. */
   async handle(event: StructuredAgentSessionLifecycleEvent): Promise<void> {
-    if (event.type === 'started') {
-      return settleStructuredAgentSessionProviderStarted(this.context, event)
+    if (event.type === 'options-reported') {
+      return settleStructuredAgentSessionOptionsReported(this.context, event)
     }
-    const ticket = await settleUnexpectedStructuredAgentSessionExit(this.context, event)
-    if (!ticket) {
-      return
-    }
-    // One serialized step with the ticket check inside it: a hold or a send that got there first
-    // has already replaced the owner, and this step finds that child and attaches nothing — or,
-    // once the lease has moved on, refuses on the stale ticket rather than spawning a second child.
-    try {
-      const resumed = await this.context.serialize(ticket.sessionId, () =>
-        this.context.ensureProviderChild(ticket.sessionId, {
-          admitRecoveryTicket: () =>
-            isStructuredAgentSessionRecoveryTicketCurrent(this.context, ticket)
-        })
-      )
-      if (!resumed.ok && isStructuredAgentSessionRecoveryTicketCurrent(this.context, ticket)) {
-        this.context.onBarrierError(
-          ticket.sessionId,
-          new Error(`${resumed.refusal.code}: ${resumed.refusal.message}`)
-        )
-      }
-    } catch (error) {
-      if (isStructuredAgentSessionRecoveryTicketCurrent(this.context, ticket)) {
-        this.context.onBarrierError(ticket.sessionId, error)
-      }
-    }
+    await settleStructuredAgentSessionChildExit(this.exitContext, event)
   }
 }
+import { finalizingStructuredAgentSessionInput } from './structured-agent-session-handing-over'

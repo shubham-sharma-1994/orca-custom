@@ -11,24 +11,34 @@ Everything is a plugin. The kernel (`orca-kernel`) has no product features; it p
 
 `orca-sdk` is the only crate plugin authors depend on. `orca-cli` (`orca-next`) is a host that composes plugins.
 
-## Plugin loading (deliberately undecided)
+## Product thesis
 
-`Plugin` is transport-agnostic. Ways a plugin can be loaded, all of which can sit behind that trait:
+A VS Code for agents, in Rust, with Orca (the TS app in the repo root) as the feature reference. Mapping:
 
-- **Static**: compiled into the host binary (today; all built-ins).
-- **WASM component** (wasmtime + WIT): sandboxed, any language, permissions enforced by the host. Best fit for third-party plugins.
-- **Out-of-process** (JSON-RPC over stdio, like LSP/MCP): simplest, language-agnostic, higher call overhead. Good for agent/PTY-heavy plugins.
+| VS Code | Orca Next |
+|---|---|
+| Extension host + API | `orca-kernel` + `orca-sdk` |
+| Extensions | Rust crates implementing `Plugin` (built-ins and third-party alike) |
+| Commands / command palette | kernel commands (JSON in/out) |
+| Contribution points (views, keybindings, settings) | manifest contributions (next kernel work) |
+| Activation events | lazy start on first command/event (next kernel work) |
+| Workbench UI | a UI plugin (Rust-native) consuming commands/events |
 
-Because commands and events are JSON, the WASM and process loaders are themselves plugins that wrap foreign code as a `Plugin`.
+## Plugins are Rust only
 
-## Roadmap: each line is an independent plugin
+No WASM or cross-language loaders. Rust has no stable ABI, so a plugin is a crate linked into the host:
 
-- `core.config` ✅ · `worktree` ✅ (list)
-- `pty` (terminals) · `agents` (Codex/Claude/OpenCode launchers) · `git` (status/diff/branches)
-- `github` / `gitlab` / `linear` / `jira` (providers) · `browser` · `mobile-bridge`
-- `rpc-server` (exposes commands to the existing Electron UI, enabling strangler migration) · `loader-wasm` · `loader-process`
-- `manifest` loader to replace `src/shared/plugins` semantics
+- **Now**: plugins are workspace crates composed in the host binary, selectable by cargo feature.
+- **Later (third-party)**: either `cargo install`-style builds of a custom host, or `abi_stable` dylibs behind the same `Plugin` trait. Decide when the first external plugin appears; the trait does not change.
+
+## Orca feature roadmap, one plugin each
+
+- done: `core.config`, `worktree` (list)
+- `pty` terminals · `agents` (Codex/Claude/OpenCode/Pi launchers + status) · `git` (status/diff/branches/commit)
+- `github`, `gitlab`, `linear`, `jira` · `browser` · `automations` · `mobile-bridge` (RPC for the phone app)
+- `rpc-server`: expose commands over a socket so the existing Electron UI can migrate feature by feature
+- `ui`: Rust-native workbench (layout, tabs, sidebar, palette)
 
 ## Next kernel work
 
-Capability permissions in manifests (fs/net/spawn) · versioned command schemas · config-driven plugin discovery · tracing.
+Manifest contributions (commands metadata, settings, keybindings, views) · activation events (lazy start) · capability permissions · versioned command schemas · tracing.

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "plugins/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+orca-kernel = { path = "crates/orca-kernel" }
+orca-sdk = { path = "crates/orca-sdk" }
+orca-plugin-core-config = { path = "plugins/core-config" }
+orca-plugin-worktree = { path = "plugins/worktree" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }

@@ -1,0 +1,16 @@
+[package]
+name = "orca-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "orca-next"
+path = "src/main.rs"
+
+[dependencies]
+orca-kernel.workspace = true
+orca-plugin-core-config.workspace = true
+orca-plugin-worktree.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
